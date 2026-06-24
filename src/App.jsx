@@ -17,10 +17,11 @@ const newCostItem = () => ({
   id: uid(),
   name: "",
   unitCost: 0,
-  qty: 1,
-  unit: "Cái", // ĐVT: free text, e.g. Ngày, Đêm, Vé, Bữa, Cái, Xe...
+  qty: 1,       // SL (số lượng người/xe/phòng...)
+  sessions: 1,  // Đêm/Lượt/Bữa (số đêm/bữa/lần)
+  unit: "Cái",  // ĐVT tự nhập
   vatPercent: 0,
-  splitByPax: false, // if true: total = (unitCost * qty) / pax  (like Xe, HDV in screenshot)
+  splitByPax: false,
 });
 
 // A cost category, e.g. "Vận chuyển", "Ăn uống"... user can add/remove freely
@@ -50,7 +51,9 @@ const newDay = (dayNumber) => ({
   id: uid(),
   dayNumber,
   title: "",
-  summary: "", // short narrative for the day, optional
+  content: "",  // HTML từ rich text editor
+  meals: [],    // ["Sáng", "Trưa", "Tối"]
+  summary: "",  // giữ lại để tương thích dữ liệu cũ
   stops: [],
 });
 
@@ -113,7 +116,8 @@ function roundTo(value, step) {
 
 // Compute totals for a single cost item, given pax count
 function itemAmounts(item, pax) {
-  const base = (Number(item.unitCost) || 0) * (Number(item.qty) || 0);
+  // Thành tiền = SL × Đêm/Lượt/Bữa × Đơn giá
+  const base = (Number(item.unitCost) || 0) * (Number(item.qty) || 0) * (Number(item.sessions) || 1);
   const beforeVat = item.splitByPax && pax > 0 ? base / pax : base;
   const vat = beforeVat * ((Number(item.vatPercent) || 0) / 100);
   const afterVat = beforeVat + vat;
@@ -724,73 +728,205 @@ function ItineraryEditor({ tour, onChange }) {
 
 function DayCard({ day, onUpdate, onAddStop, onUpdateStop, onRemoveStop }) {
   const [collapsed, setCollapsed] = useState(false);
+  const editorRef = useRef(null);
+  const isComposing = useRef(false);
+
+  // Sync HTML content vào editor khi mới mount hoặc khi id thay đổi
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== (day.content || "")) {
+      editorRef.current.innerHTML = day.content || "";
+    }
+  }, [day.id]);
+
+  const execCmd = (cmd, value = null) => {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, value);
+    handleContentChange();
+  };
+
+  const handleContentChange = () => {
+    const html = editorRef.current?.innerHTML || "";
+    onUpdate({ content: html });
+  };
+
+  // Nhóm bữa ăn gắn liền vào tiêu đề ngày — parse từ title hoặc meals field
+  const meals = day.meals || [];
 
   return (
-    <div className="ta-card" style={{ overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", cursor: "pointer", background: PALETTE.surfaceAlt }} onClick={() => setCollapsed(!collapsed)}>
-        <div style={{ width: 30, height: 30, borderRadius: 8, background: PALETTE.primary, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
-          {day.dayNumber}
+    <div className="ta-card" style={{ overflow: "hidden", borderRadius: 12 }}>
+      {/* Header accordion — kiểu RootTrip */}
+      <div
+        style={{
+          display: "flex", alignItems: "center", gap: 0,
+          background: collapsed ? PALETTE.primaryLight : PALETTE.primary,
+          cursor: "pointer", transition: "background .2s",
+        }}
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        {/* Badge số ngày */}
+        <div style={{
+          minWidth: 52, alignSelf: "stretch", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", padding: "12px 0",
+          background: PALETTE.primaryDark, color: "white",
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", opacity: 0.7 }}>NGÀY</span>
+          <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', serif", lineHeight: 1 }}>{day.dayNumber}</span>
         </div>
+
+        {/* Tiêu đề */}
         <input
           className="ta-input"
-          placeholder={`Tiêu đề ngày ${day.dayNumber} (VD: Khám phá Hội An)`}
+          placeholder={`Nhập tiêu đề ngày ${day.dayNumber} (VD: Đón sân bay – VinWonders – Grand World)`}
           value={day.title}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onUpdate({ title: e.target.value })}
-          style={{ background: "white", flex: 1 }}
+          style={{
+            flex: 1, background: "transparent", border: "none", outline: "none",
+            color: collapsed ? PALETTE.primaryDark : "white", fontWeight: 600, fontSize: 14,
+            padding: "0 14px",
+          }}
         />
-        <span style={{ fontSize: 12, color: PALETTE.textMuted, whiteSpace: "nowrap" }}>{day.stops.length} điểm</span>
-        {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+
+        {/* Tags bữa ăn */}
+        <div style={{ display: "flex", gap: 4, padding: "0 10px", flexShrink: 0 }}
+          onClick={(e) => e.stopPropagation()}>
+          {["Sáng", "Trưa", "Tối"].map((meal) => {
+            const active = meals.includes(meal);
+            return (
+              <button key={meal} onClick={() => {
+                const next = active ? meals.filter(m => m !== meal) : [...meals, meal];
+                onUpdate({ meals: next });
+              }} style={{
+                padding: "3px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                border: "none",
+                background: active ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.2)",
+                color: active ? PALETTE.primaryDark : "rgba(255,255,255,0.7)",
+              }}>
+                {meal}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ padding: "0 12px", color: collapsed ? PALETTE.primary : "rgba(255,255,255,0.8)" }}>
+          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </div>
       </div>
 
+      {/* Body */}
       {!collapsed && (
-        <div style={{ padding: 18 }}>
-          <Field label="Mô tả chung trong ngày (tuỳ chọn)">
-            <textarea className="ta-textarea" rows={2} placeholder="VD: Khởi hành sớm, ăn sáng tại khách sạn, di chuyển bằng xe riêng..." value={day.summary} onChange={(e) => onUpdate({ summary: e.target.value })} />
-          </Field>
+        <div>
+          {/* Rich text toolbar */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 2, padding: "8px 12px",
+            borderBottom: `1px solid ${PALETTE.border}`, flexWrap: "wrap", background: PALETTE.surfaceAlt,
+          }}>
+            {[
+              { label: "B", cmd: "bold", style: { fontWeight: 700 } },
+              { label: "I", cmd: "italic", style: { fontStyle: "italic" } },
+              { label: "U", cmd: "underline", style: { textDecoration: "underline" } },
+            ].map(({ label, cmd, style }) => (
+              <button key={cmd} onMouseDown={(e) => { e.preventDefault(); execCmd(cmd); }}
+                style={{ ...style, padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
+                {label}
+              </button>
+            ))}
+            <div style={{ width: 1, height: 22, background: PALETTE.border, margin: "0 4px" }} />
+            <button onMouseDown={(e) => { e.preventDefault(); execCmd("insertUnorderedList"); }}
+              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
+              ☰ List
+            </button>
+            <button onMouseDown={(e) => { e.preventDefault(); execCmd("formatBlock", "h4"); }}
+              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
+              Tiêu đề
+            </button>
+            <button onMouseDown={(e) => { e.preventDefault(); execCmd("formatBlock", "p"); }}
+              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
+              Đoạn văn
+            </button>
+            <div style={{ width: 1, height: 22, background: PALETTE.border, margin: "0 4px" }} />
+            <button onMouseDown={(e) => { e.preventDefault(); execCmd("removeFormat"); }}
+              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 12, color: PALETTE.textMuted }}>
+              Xoá định dạng
+            </button>
+          </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          {/* ContentEditable rich text area */}
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onCompositionStart={() => { isComposing.current = true; }}
+            onCompositionEnd={() => { isComposing.current = false; handleContentChange(); }}
+            onInput={() => { if (!isComposing.current) handleContentChange(); }}
+            data-placeholder="Nhập nội dung lịch trình ngày này... (hỗ trợ in đậm, danh sách, tiêu đề)"
+            style={{
+              minHeight: 120, padding: "14px 18px", outline: "none",
+              fontSize: 13.5, lineHeight: 1.8, color: PALETTE.ink,
+            }}
+          />
+
+          {/* Điểm dừng có ảnh */}
+          <div style={{ padding: "0 18px 18px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, paddingTop: 14, borderTop: `1px solid ${PALETTE.border}` }}>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.textMuted, display: "flex", alignItems: "center", gap: 6 }}>
-                <MapPin size={14} /> Điểm dừng / hoạt động
+                <Camera size={13} /> Ảnh điểm tham quan
               </span>
               <button className="ta-btn ta-btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onAddStop}>
-                <Plus size={12} /> Thêm điểm
+                <Plus size={12} /> Thêm ảnh điểm
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {day.stops.map((stop) => (
-                <StopRow key={stop.id} stop={stop} onUpdate={(patch) => onUpdateStop(stop.id, patch)} onRemove={() => onRemoveStop(stop.id)} />
-              ))}
-              {day.stops.length === 0 && (
-                <div style={{ fontSize: 12.5, color: PALETTE.textFaint, padding: "10px 4px" }}>Chưa có điểm dừng nào. Bấm "Thêm điểm" để bắt đầu.</div>
-              )}
-            </div>
+            {day.stops.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+                {day.stops.map((stop) => (
+                  <StopCard key={stop.id} stop={stop}
+                    onUpdate={(patch) => onUpdateStop(stop.id, patch)}
+                    onRemove={() => onRemoveStop(stop.id)} />
+                ))}
+              </div>
+            )}
+
+            {day.stops.length === 0 && (
+              <div style={{ fontSize: 12, color: PALETTE.textFaint, padding: "6px 0" }}>
+                Thêm ảnh điểm tham quan để hiển thị lưới ảnh trong bản gửi khách
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      <style>{`
+        [contenteditable]:empty:before {
+          content: attr(data-placeholder);
+          color: #9CA39D;
+          pointer-events: none;
+        }
+        [contenteditable] h4 { font-size: 14px; font-weight: 700; margin: 10px 0 4px; color: #0F5D52; }
+        [contenteditable] ul { margin: 6px 0 6px 20px; padding: 0; }
+        [contenteditable] li { margin-bottom: 3px; }
+        [contenteditable] p { margin: 4px 0; }
+      `}</style>
     </div>
   );
 }
 
-function StopRow({ stop, onUpdate, onRemove }) {
+function StopCard({ stop, onUpdate, onRemove }) {
   return (
-    <div style={{ display: "flex", gap: 12, padding: 12, background: PALETTE.surfaceAlt, borderRadius: 10, alignItems: "flex-start" }}>
-      <div style={{ width: 84, height: 64, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: PALETTE.surface, border: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {stop.imageUrl ? (
-          <img src={stop.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
-        ) : (
-          <Camera size={18} color={PALETTE.textFaint} />
-        )}
+    <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
+      <div style={{ height: 100, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {!stop.imageUrl && <Camera size={20} color={PALETTE.textFaint} />}
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-        <input className="ta-input" placeholder="Tên điểm đến (VD: Chùa Linh Ứng)" value={stop.name} onChange={(e) => onUpdate({ name: e.target.value })} style={{ padding: "7px 10px", fontSize: 13.5, fontWeight: 500 }} />
-        <textarea className="ta-textarea" placeholder="Mô tả ngắn (tuỳ chọn)" rows={1} value={stop.description} onChange={(e) => onUpdate({ description: e.target.value })} style={{ padding: "7px 10px", fontSize: 12.5 }} />
-        <input className="ta-input" placeholder="URL ảnh (dán link ảnh điểm đến)" value={stop.imageUrl} onChange={(e) => onUpdate({ imageUrl: e.target.value })} style={{ padding: "7px 10px", fontSize: 12 }} />
+      <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+        <input className="ta-input" placeholder="Tên điểm" value={stop.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          style={{ padding: "5px 8px", fontSize: 12.5, fontWeight: 600 }} />
+        <input className="ta-input" placeholder="URL ảnh" value={stop.imageUrl}
+          onChange={(e) => onUpdate({ imageUrl: e.target.value })}
+          style={{ padding: "5px 8px", fontSize: 11 }} />
       </div>
-      <button onClick={onRemove} aria-label="Xoá điểm dừng" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint, padding: 4, flexShrink: 0 }}>
-        <X size={16} />
+      <button onClick={onRemove} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <X size={12} />
       </button>
     </div>
   );
@@ -824,13 +960,14 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
   return (
     <div className="ta-card" style={{ overflow: "hidden" }}>
       {/* Table header */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 56px 90px 70px 110px 26px", gap: 8, padding: "10px 16px", background: PALETTE.gold, fontSize: 11, fontWeight: 700, color: "#3D3000" }}>
-        <div>DỊCH VỤ</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, padding: "10px 16px", background: PALETTE.gold, fontSize: 11, fontWeight: 700, color: "#3D3000" }}>
+        <div>KHOẢN MỤC</div>
         <div style={{ textAlign: "right" }}>ĐƠN GIÁ</div>
         <div style={{ textAlign: "right" }}>SL</div>
+        <div style={{ textAlign: "right" }}>Đêm/Lượt/Bữa</div>
         <div>ĐVT</div>
         <div style={{ textAlign: "right" }}>VAT%</div>
-        <div style={{ textAlign: "right" }}>SAU VAT</div>
+        <div style={{ textAlign: "right" }}>THÀNH TIỀN</div>
         <div></div>
       </div>
 
@@ -840,7 +977,7 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
           return (
             <div key={cat.id} style={{ borderBottom: `1px solid ${PALETTE.border}` }}>
               {/* Category header row */}
-              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 56px 90px 70px 110px 26px", gap: 8, alignItems: "center", padding: "8px 16px", background: PALETTE.goldLight }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, alignItems: "center", padding: "8px 16px", background: PALETTE.goldLight }}>
                 <input
                   className="ta-input"
                   value={cat.name}
@@ -848,7 +985,7 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
                   style={{ fontWeight: 700, fontSize: 13, background: "transparent", border: "none", padding: "4px 2px" }}
                   placeholder="Tên danh mục"
                 />
-                <div></div><div></div><div></div><div></div>
+                <div></div><div></div><div></div><div></div><div></div>
                 <div style={{ textAlign: "right", fontWeight: 700, fontSize: 13, color: PALETTE.danger }}>{formatVND(total)}</div>
                 <button onClick={() => removeCategory(cat.id)} aria-label="Xoá danh mục" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
                   <Trash2 size={14} />
@@ -859,13 +996,14 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
               {cat.items.map((item) => {
                 const amounts = itemAmounts(item, pax);
                 return (
-                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 110px 56px 90px 70px 110px 26px", gap: 8, alignItems: "center", padding: "6px 16px" }}>
-                    <input className="ta-input" placeholder="Tên dịch vụ" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 13 }} />
+                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, alignItems: "center", padding: "6px 16px", borderTop: `1px solid ${PALETTE.border}` }}>
+                    <input className="ta-input" placeholder="Tên khoản mục" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 13 }} />
                     <input className="ta-input" inputMode="numeric" placeholder="0" value={item.unitCost ? Number(item.unitCost).toLocaleString("vi-VN") : ""} onChange={(e) => updateItem(cat.id, item.id, { unitCost: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
                     <input className="ta-input" type="number" min={0} value={item.qty} onChange={(e) => updateItem(cat.id, item.id, { qty: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
+                    <input className="ta-input" type="number" min={0} value={item.sessions ?? 1} onChange={(e) => updateItem(cat.id, item.id, { sessions: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
                     <input className="ta-input" list="unit-options" value={item.unit} onChange={(e) => updateItem(cat.id, item.id, { unit: e.target.value })} style={{ padding: "6px 9px", fontSize: 13 }} />
                     <input className="ta-input" type="number" min={0} max={100} value={item.vatPercent} onChange={(e) => updateItem(cat.id, item.id, { vatPercent: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 600 }}>{formatVND(amounts.afterVat)}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 600, color: PALETTE.danger }}>{formatVND(amounts.afterVat)}</div>
                     <button onClick={() => removeItem(cat.id, item.id)} aria-label="Xoá dòng" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
                       <X size={14} />
                     </button>
@@ -1086,41 +1224,61 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Users size={14} /> {pricing.pax} khách</span>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {tour.itinerary.map((day) => (
-            <div key={day.id} style={{ pageBreakInside: "avoid" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: "50%", background: PALETTE.primary, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: "'Fraunces', serif", flexShrink: 0 }}>
-                  {day.dayNumber}
+            <div key={day.id} style={{ pageBreakInside: "avoid", borderRadius: 12, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
+              {/* Header ngày — đúng kiểu RootTrip */}
+              <div style={{ display: "flex", alignItems: "stretch", background: PALETTE.primary }}>
+                <div style={{
+                  minWidth: 56, display: "flex", flexDirection: "column", alignItems: "center",
+                  justifyContent: "center", padding: "10px 0", background: PALETTE.primaryDark, color: "white",
+                }}>
+                  <span style={{ fontSize: 8, fontWeight: 600, letterSpacing: "0.08em", opacity: 0.7 }}>NGÀY</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', serif", lineHeight: 1 }}>{day.dayNumber}</span>
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: PALETTE.ink }}>
-                  Ngày {day.dayNumber}{day.title ? `: ${day.title}` : ""}
+                <div style={{ flex: 1, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "white", lineHeight: 1.4 }}>
+                    {day.title || `Ngày ${day.dayNumber}`}
+                  </div>
+                  {day.meals && day.meals.length > 0 && (
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      {day.meals.map((meal) => (
+                        <span key={meal} style={{ padding: "2px 8px", borderRadius: 20, fontSize: 10.5, fontWeight: 600, background: "rgba(255,255,255,0.2)", color: "white" }}>
+                          Ăn {meal.toLowerCase()}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {day.summary && (
-                <div style={{ fontSize: 13, color: PALETTE.textMuted, lineHeight: 1.7, marginBottom: 14, paddingLeft: 44 }}>{day.summary}</div>
-              )}
+              {/* Nội dung HTML từ rich text */}
+              <div style={{ padding: "14px 18px" }}>
+                {(day.content || day.summary) ? (
+                  <div
+                    style={{ fontSize: 13, lineHeight: 1.8, color: PALETTE.ink }}
+                    dangerouslySetInnerHTML={{ __html: day.content || `<p>${day.summary}</p>` }}
+                  />
+                ) : (
+                  <div style={{ fontSize: 12.5, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có nội dung lịch trình</div>
+                )}
 
-              {day.stops.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, paddingLeft: 44 }}>
-                  {day.stops.map((stop) => (
-                    <div key={stop.id} className="ta-card" style={{ overflow: "hidden" }}>
-                      {stop.imageUrl ? (
-                        <div style={{ height: 100, background: `url(${stop.imageUrl}) center/cover` }} />
-                      ) : (
-                        <div style={{ height: 100, background: PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <ImageIcon size={20} color={PALETTE.textFaint} />
+                {/* Lưới ảnh điểm tham quan */}
+                {day.stops.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 14 }}>
+                    {day.stops.map((stop) => (
+                      <div key={stop.id} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
+                        <div style={{ height: 80, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {!stop.imageUrl && <ImageIcon size={16} color={PALETTE.textFaint} />}
                         </div>
-                      )}
-                      <div style={{ padding: "8px 12px" }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.ink }}>{stop.name || "Điểm dừng"}</div>
-                        {stop.description && <div style={{ fontSize: 11, color: PALETTE.textMuted, marginTop: 2, lineHeight: 1.5 }}>{stop.description}</div>}
+                        {stop.name && (
+                          <div style={{ padding: "5px 8px", fontSize: 11, fontWeight: 600, color: PALETTE.ink }}>{stop.name}</div>
+                        )}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -1141,6 +1299,8 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
   );
 }
 
+
+
 /* ---------- Internal cost breakdown — TourAI style table ---------- */
 
 function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 25400 }) {
@@ -1158,46 +1318,55 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
       </div>
 
       <div style={{ border: `1px solid ${PALETTE.border}`, borderRadius: 10, overflow: "hidden" }}>
-        {/* Header */}
-        <div style={{ display: "grid", gridTemplateColumns: "32px 1.6fr 90px 40px 60px 90px 50px 100px", background: PALETTE.gold, fontSize: 10.5, fontWeight: 700, color: "#3D3000" }}>
+        {/* Header — đúng format ảnh mẫu: STT | Khoản mục | SL | Đêm/Lượt/Bữa | Đơn giá | Thành tiền | Ghi chú */}
+        <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: PALETTE.gold, fontSize: 10.5, fontWeight: 700, color: "#3D3000" }}>
           <div style={cellHead}>STT</div>
-          <div style={cellHead}>DỊCH VỤ</div>
-          <div style={{ ...cellHead, textAlign: "right" }}>ĐƠN GIÁ</div>
+          <div style={cellHead}>KHOẢN MỤC</div>
           <div style={{ ...cellHead, textAlign: "right" }}>SL</div>
-          <div style={cellHead}>ĐVT</div>
-          <div style={{ ...cellHead, textAlign: "right" }}>TRƯỚC VAT</div>
-          <div style={{ ...cellHead, textAlign: "right" }}>%VAT</div>
-          <div style={{ ...cellHead, textAlign: "right" }}>SAU VAT</div>
+          <div style={{ ...cellHead, textAlign: "center" }}>Đêm/Lượt/Bữa</div>
+          <div style={{ ...cellHead, textAlign: "right" }}>Đơn giá</div>
+          <div style={{ ...cellHead, textAlign: "right" }}>Thành tiền</div>
+          <div style={cellHead}>Ghi chú</div>
         </div>
 
         {tour.costCategories.map((cat, catIdx) => {
           const total = categoryTotal(cat, pricing.pax);
           return (
             <React.Fragment key={cat.id}>
-              <div style={{ display: "grid", gridTemplateColumns: "32px 1.6fr 90px 40px 60px 90px 50px 100px", background: PALETTE.goldLight, fontSize: 11.5, fontWeight: 700 }}>
-                <div style={cell}>{toRoman(catIdx + 1)}</div>
+              {/* Category row — nền xanh nhạt như ảnh mẫu */}
+              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: "#DAEAF7", fontSize: 11.5, fontWeight: 700, borderTop: `1px solid ${PALETTE.border}` }}>
+                <div style={cell}>{String.fromCharCode(64 + catIdx + 1)}</div>
                 <div style={cell}>{cat.name}</div>
-                <div style={cell}></div><div style={cell}></div><div style={cell}></div><div style={cell}></div><div style={cell}></div>
+                <div style={cell}></div><div style={cell}></div><div style={cell}></div>
                 <div style={{ ...cell, textAlign: "right", color: PALETTE.danger }}>{money(total)}</div>
+                <div style={cell}></div>
               </div>
               {cat.items.map((item, itemIdx) => {
                 const a = itemAmounts(item, pricing.pax);
                 return (
-                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "32px 1.6fr 90px 40px 60px 90px 50px 100px", fontSize: 11.5, borderTop: `1px solid ${PALETTE.border}` }}>
+                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", fontSize: 11.5, borderTop: `1px solid ${PALETTE.border}` }}>
                     <div style={{ ...cell, color: PALETTE.textFaint }}>{itemIdx + 1}</div>
                     <div style={cell}>{item.name || "—"}</div>
-                    <div style={{ ...cell, textAlign: "right", color: PALETTE.textMuted }}>{item.unitCost ? money(item.unitCost) : "-"}</div>
                     <div style={{ ...cell, textAlign: "right" }}>{item.qty}</div>
-                    <div style={cell}>{item.unit}</div>
-                    <div style={{ ...cell, textAlign: "right", color: PALETTE.textMuted }}>{money(a.beforeVat)}</div>
-                    <div style={{ ...cell, textAlign: "right" }}>{item.vatPercent || 0}</div>
-                    <div style={{ ...cell, textAlign: "right", fontWeight: 600 }}>{money(a.afterVat)}</div>
+                    <div style={{ ...cell, textAlign: "right" }}>{item.sessions ?? 1}</div>
+                    <div style={{ ...cell, textAlign: "right", color: PALETTE.textMuted }}>{item.unitCost ? money(item.unitCost) : "-"}</div>
+                    <div style={{ ...cell, textAlign: "right", fontWeight: 600, color: PALETTE.danger }}>{money(a.afterVat)}</div>
+                    <div style={{ ...cell, fontSize: 10.5, color: PALETTE.textFaint }}>{item.unit}</div>
                   </div>
                 );
               })}
             </React.Fragment>
           );
         })}
+
+        {/* Dòng TỔNG cuối bảng — giống ảnh mẫu chữ H TỔNG */}
+        <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: "#FFF3CD", fontWeight: 700, fontSize: 12, borderTop: `2px solid ${PALETTE.borderStrong}` }}>
+          <div style={cell}>H</div>
+          <div style={{ ...cell, color: PALETTE.danger }}>TỔNG</div>
+          <div style={cell}></div><div style={cell}></div><div style={cell}></div>
+          <div style={{ ...cell, textAlign: "right", color: PALETTE.danger, fontSize: 13 }}>{money(pricing.costTotalAll)}</div>
+          <div style={cell}></div>
+        </div>
       </div>
 
       {/* Summary block */}
