@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Copy, Printer, ChevronDown, ChevronUp, MapPin, Calendar,
   Users, ArrowLeft, FileText, Wallet, Eye, Compass, X, Check, TrendingUp,
   ClipboardList, Image as ImageIcon, GripVertical, Folder, Percent, Camera,
-  DollarSign,
+  DollarSign, Share2, Link, Star, CheckCircle, XCircle,
 } from "lucide-react";
 
 /* ============================================================
@@ -65,6 +65,9 @@ const newTour = () => ({
   durationDays: 1,
   pax: 10,
   coverImageUrl: "",
+  highlights: "",   // HTML rich text — Điểm nổi bật
+  includes: [],     // string[] — Tour bao gồm
+  excludes: [],     // string[] — Tour không bao gồm
   costCategories: DEFAULT_CATEGORIES(),
   profitMode: "percent", // "percent" | "fixed"
   profitPercent: 10,
@@ -186,6 +189,34 @@ async function saveTours(tours) {
   }
 }
 
+// Lưu/tải báo giá public qua window.storage (shared) để tạo link gửi khách
+async function publishTour(tour) {
+  try {
+    const key = `public:${tour.id}`;
+    await window.storage.set(key, JSON.stringify(tour), true);
+    return key;
+  } catch (e) {
+    // Fallback: encode vào URL hash (giới hạn ~2KB)
+    return null;
+  }
+}
+
+async function loadPublicTour(tourId) {
+  try {
+    const res = await window.storage.get(`public:${tourId}`, true);
+    if (res) return JSON.parse(res.value);
+  } catch {}
+  return null;
+}
+
+// Kiểm tra URL có phải link xem public không
+function getPublicTourIdFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("view") || null;
+  } catch { return null; }
+}
+
 /* ============================================================
    THEME
    ============================================================ */
@@ -213,15 +244,16 @@ const PALETTE = {
 function GlobalStyle() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
       * { box-sizing: border-box; }
+      body, html { font-family: 'Montserrat', sans-serif; }
       .ta-input, .ta-select, .ta-textarea {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Montserrat', sans-serif;
         border: 1px solid ${PALETTE.border};
         background: ${PALETTE.surface};
         border-radius: 8px;
         padding: 9px 11px;
-        font-size: 14px;
+        font-size: 13.5px;
         color: ${PALETTE.ink};
         width: 100%;
         outline: none;
@@ -230,9 +262,9 @@ function GlobalStyle() {
       .ta-input:focus, .ta-select:focus, .ta-textarea:focus { border-color: ${PALETTE.primary}; }
       .ta-input::placeholder, .ta-textarea::placeholder { color: ${PALETTE.textFaint}; }
       .ta-btn {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        font-size: 14px;
+        font-family: 'Montserrat', sans-serif;
+        font-weight: 600;
+        font-size: 13px;
         border-radius: 8px;
         padding: 9px 16px;
         cursor: pointer;
@@ -251,6 +283,7 @@ function GlobalStyle() {
       .ta-btn-danger:hover { background: ${PALETTE.dangerLight}; }
       .ta-btn:active { transform: scale(0.98); }
       .ta-card { background: ${PALETTE.surface}; border: 1px solid ${PALETTE.border}; border-radius: 14px; }
+      h1,h2,h3,h4,h5 { font-family: 'Montserrat', sans-serif; }
       ::-webkit-scrollbar { width: 8px; height: 8px; }
       ::-webkit-scrollbar-thumb { background: ${PALETTE.borderStrong}; border-radius: 4px; }
       @media print {
@@ -265,7 +298,7 @@ function GlobalStyle() {
 }
 
 const styles = {
-  appShell: { minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Inter', sans-serif", color: PALETTE.ink },
+  appShell: { minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Montserrat', sans-serif", color: PALETTE.ink },
   loadingScreen: { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: PALETTE.bg },
   loadingSpinner: { width: 28, height: 28, border: `3px solid ${PALETTE.border}`, borderTopColor: PALETTE.primary, borderRadius: "50%", animation: "spin 0.8s linear infinite" },
   toast: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: PALETTE.ink, color: "white", padding: "10px 18px", borderRadius: 10, fontSize: 13.5, fontWeight: 500, zIndex: 999 },
@@ -291,11 +324,39 @@ export default function App() {
   const [activeTourId, setActiveTourId] = useState(null);
   const [view, setView] = useState("list");
   const [toast, setToast] = useState(null);
+  const [publicTour, setPublicTour] = useState(null); // tour xem qua link public
   const saveTimer = useRef(null);
 
   useEffect(() => {
+    // Kiểm tra xem có phải link xem public không
+    const publicId = getPublicTourIdFromUrl();
+    if (publicId) {
+      loadPublicTour(publicId).then((t) => {
+        if (t) setPublicTour(t);
+        else setPublicTour("not_found");
+      });
+      return;
+    }
     loadTours().then((t) => setTours(t));
   }, []);
+
+  // --- Nếu đang xem link public ---
+  if (publicTour) {
+    if (publicTour === "not_found") {
+      return (
+        <div style={styles.loadingScreen}>
+          <GlobalStyle/>
+          <p style={{ color: PALETTE.textMuted }}>Không tìm thấy báo giá. Link có thể đã hết hạn.</p>
+        </div>
+      );
+    }
+    return (
+      <div style={styles.appShell}>
+        <GlobalStyle/>
+        <PublicTourView tour={publicTour}/>
+      </div>
+    );
+  }
 
   const persist = useCallback((next) => {
     setTours(next);
@@ -400,7 +461,7 @@ function TourList({ tours, onOpen, onCreate, onDuplicate, onDelete }) {
             <Compass size={22} color="white" strokeWidth={2} />
           </div>
           <div>
-            <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 600, margin: 0, letterSpacing: "-0.01em" }}>
+            <h1 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 24, fontWeight: 600, margin: 0, letterSpacing: "-0.01em" }}>
               Báo giá tour
             </h1>
             <p style={{ margin: 0, fontSize: 13, color: PALETTE.textMuted }}>{tours.length} tour đã lưu</p>
@@ -436,7 +497,7 @@ function TourList({ tours, onOpen, onCreate, onDuplicate, onDelete }) {
                 <div style={{ padding: "16px 20px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div style={{ minWidth: 0 }}>
-                      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 600, fontFamily: "'Fraunces', serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 600, fontFamily: "'Montserrat', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {tour.name || "Tour chưa đặt tên"}
                       </h3>
                       <div style={{ display: "flex", alignItems: "center", gap: 5, color: PALETTE.textMuted, fontSize: 12.5 }}>
@@ -498,7 +559,7 @@ function EmptyState({ onCreate }) {
       <div style={{ width: 56, height: 56, borderRadius: 14, background: PALETTE.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
         <Compass size={28} color={PALETTE.primary} />
       </div>
-      <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 19, margin: "0 0 6px" }}>Chưa có tour nào</h3>
+      <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 19, margin: "0 0 6px" }}>Chưa có tour nào</h3>
       <p style={{ color: PALETTE.textMuted, fontSize: 14, margin: "0 0 20px" }}>Tạo báo giá tour đầu tiên của bạn để bắt đầu</p>
       <button className="ta-btn ta-btn-primary" onClick={onCreate} style={{ margin: "0 auto" }}>
         <Plus size={16} /> Tạo tour mới
@@ -533,15 +594,41 @@ function TourEditor({ tour, onChange, onBack, onPreview, showToast }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <TourBasicsCard tour={tour} setField={setField} setDuration={setDuration} />
 
+          {/* Điểm nổi bật */}
+          <RichTextCard
+            title="✦ Điểm nổi bật"
+            value={tour.highlights || ""}
+            onChange={(v) => setField("highlights", v)}
+            placeholder="Nhập điểm nổi bật của tour... (hỗ trợ in đậm, danh sách bullet)"
+          />
+
+          {/* Tour bao gồm / không bao gồm */}
+          <IncludesCard tour={tour} setField={setField} />
+
           <div>
-            <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "8px 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
-              <ClipboardList size={18} /> Lịch trình theo ngày
-            </h2>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "8px 0 12px" }}>
+              <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                <ClipboardList size={18} /> Lịch trình theo ngày
+              </h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, color: PALETTE.textMuted }}>Số ngày:</span>
+                {[1,2,3,4,5,6,7].map((d) => (
+                  <button key={d} onClick={() => setDuration(d)} style={{
+                    width: 30, height: 30, borderRadius: 8,
+                    border: `1.5px solid ${tour.durationDays === d ? PALETTE.primary : PALETTE.border}`,
+                    background: tour.durationDays === d ? PALETTE.primary : PALETTE.surface,
+                    color: tour.durationDays === d ? "white" : PALETTE.ink,
+                    cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
+                    fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>{d}</button>
+                ))}
+              </div>
+            </div>
             <ItineraryEditor tour={tour} onChange={onChange} />
           </div>
 
           <div>
-            <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "8px 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
+            <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: "8px 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
               <Wallet size={18} /> Bảng chi phí
             </h2>
             <CostCategoriesEditor tour={tour} onChange={onChange} pax={pricing.pax} />
@@ -569,7 +656,7 @@ function EditorTopBar({ tour, onBack, onPreview }) {
     <div className="no-print" style={{ position: "sticky", top: 0, zIndex: 10, background: "rgba(250,248,243,0.92)", backdropFilter: "blur(6px)", borderBottom: `1px solid ${PALETTE.border}` }}>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <button className="ta-btn ta-btn-ghost" onClick={onBack}><ArrowLeft size={16} /> Danh sách tour</button>
-        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600, color: PALETTE.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "center" }}>
+        <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 15, fontWeight: 600, color: PALETTE.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "center" }}>
           {tour.name || "Tour chưa đặt tên"}
         </div>
         <button className="ta-btn ta-btn-primary" onClick={onPreview}><Eye size={16} /> Xem báo giá</button>
@@ -578,10 +665,132 @@ function EditorTopBar({ tour, onBack, onPreview }) {
   );
 }
 
+/* ---- Shared Rich Text Editor (dùng lại cho Lịch trình, Điểm nổi bật) ---- */
+function RichTextCard({ title, value, onChange, placeholder, accentColor }) {
+  const editorRef = useRef(null);
+  const isComposing = useRef(false);
+  const accent = accentColor || PALETTE.primary;
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== (value || "")) {
+      editorRef.current.innerHTML = value || "";
+    }
+  }, []); // chỉ chạy khi mount
+
+  const execCmd = (cmd, val = null) => {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val);
+    onChange(editorRef.current?.innerHTML || "");
+  };
+
+  return (
+    <div className="ta-card" style={{ overflow: "hidden" }}>
+      <div style={{ padding: "12px 18px 10px", borderBottom: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <Star size={16} color={accent} />
+        <span style={{ fontWeight: 700, fontSize: 14, color: PALETTE.ink }}>{title}</span>
+      </div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", background: PALETTE.surfaceAlt, borderBottom: `1px solid ${PALETTE.border}`, flexWrap: "wrap" }}>
+        {[["B","bold",{fontWeight:700}],["I","italic",{fontStyle:"italic"}],["U","underline",{textDecoration:"underline"}]].map(([label,cmd,st]) => (
+          <button key={cmd} onMouseDown={(e)=>{e.preventDefault();execCmd(cmd);}}
+            style={{...st, padding:"3px 9px", border:`1px solid ${PALETTE.border}`, borderRadius:6, cursor:"pointer", background:PALETTE.surface, fontSize:13, fontFamily:"'Montserrat',sans-serif"}}>
+            {label}
+          </button>
+        ))}
+        <div style={{width:1,height:20,background:PALETTE.border,margin:"0 3px"}}/>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("insertUnorderedList");}}
+          style={{padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>
+          ☰ Bullet
+        </button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("insertOrderedList");}}
+          style={{padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>
+          1. Số
+        </button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("formatBlock","h4");}}
+          style={{padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>
+          Tiêu đề
+        </button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("formatBlock","p");}}
+          style={{padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>
+          Đoạn
+        </button>
+        <div style={{width:1,height:20,background:PALETTE.border,margin:"0 3px"}}/>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("removeFormat");}}
+          style={{padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:11,color:PALETTE.textMuted}}>
+          ✕ Xoá định dạng
+        </button>
+      </div>
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        onCompositionStart={()=>{isComposing.current=true;}}
+        onCompositionEnd={()=>{isComposing.current=false; onChange(editorRef.current?.innerHTML||"");}}
+        onInput={()=>{if(!isComposing.current) onChange(editorRef.current?.innerHTML||"");}}
+        data-placeholder={placeholder}
+        style={{ minHeight:100, padding:"14px 18px", outline:"none", fontSize:13.5, lineHeight:1.8, color:PALETTE.ink, fontFamily:"'Montserrat',sans-serif" }}
+      />
+      <style>{`
+        [contenteditable]:empty:before{content:attr(data-placeholder);color:#9CA39D;pointer-events:none;}
+        [contenteditable] h4{font-size:14px;font-weight:700;margin:10px 0 4px;color:${accent};}
+        [contenteditable] ul,[contenteditable] ol{margin:6px 0 6px 20px;padding:0;}
+        [contenteditable] li{margin-bottom:3px;}
+        [contenteditable] p{margin:4px 0;}
+      `}</style>
+    </div>
+  );
+}
+
+/* ---- Tour bao gồm / Không bao gồm ---- */
+function IncludesCard({ tour, setField }) {
+  const addItem = (key) => setField(key, [...(tour[key] || []), ""]);
+  const updateItem = (key, idx, val) => setField(key, (tour[key]||[]).map((v,i)=>i===idx?val:v));
+  const removeItem = (key, idx) => setField(key, (tour[key]||[]).filter((_,i)=>i!==idx));
+
+  return (
+    <div className="ta-card" style={{ overflow: "hidden" }}>
+      <div style={{ padding: "12px 18px 10px", borderBottom: `1px solid ${PALETTE.border}` }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Tour bao gồm / Không bao gồm</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+        {[
+          { key: "includes", label: "✓ Tour bao gồm", color: PALETTE.primary, icon: <CheckCircle size={14} color={PALETTE.primary}/> },
+          { key: "excludes", label: "✗ Tour không bao gồm", color: PALETTE.danger, icon: <XCircle size={14} color={PALETTE.danger}/> },
+        ].map(({ key, label, color, icon }) => (
+          <div key={key} style={{ padding: 16, borderRight: key === "includes" ? `1px solid ${PALETTE.border}` : "none" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color, display:"flex", alignItems:"center", gap:5 }}>{icon}{label}</span>
+              <button className="ta-btn ta-btn-ghost" style={{ padding:"2px 8px", fontSize:11 }} onClick={()=>addItem(key)}>
+                <Plus size={11}/> Thêm
+              </button>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {(tour[key]||[]).map((item, idx) => (
+                <div key={idx} style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ color, flexShrink:0, fontSize:14 }}>{key==="includes"?"✓":"✗"}</span>
+                  <input className="ta-input" value={item} placeholder="Nhập nội dung..."
+                    onChange={(e)=>updateItem(key, idx, e.target.value)}
+                    style={{ padding:"6px 9px", fontSize:12.5, flex:1 }}/>
+                  <button onClick={()=>removeItem(key,idx)} style={{ background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint,flexShrink:0 }}>
+                    <X size={14}/>
+                  </button>
+                </div>
+              ))}
+              {(tour[key]||[]).length === 0 && (
+                <div style={{ fontSize:12, color:PALETTE.textFaint, fontStyle:"italic" }}>Chưa có mục nào</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TourBasicsCard({ tour, setField, setDuration }) {
   return (
     <div className="ta-card" style={{ padding: 18 }}>
-      <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "0 0 14px" }}>Thông tin tour</h2>
+      <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: "0 0 14px" }}>Thông tin tour</h2>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Tên tour" span={2}>
           <input className="ta-input" placeholder="VD: Khám phá Đà Nẵng - Hội An - Bà Nà Hills" value={tour.name} onChange={(e) => setField("name", e.target.value)} />
@@ -611,7 +820,7 @@ function CompanyInfoCard({ tour, setCompanyField }) {
   return (
     <div className="ta-card" style={{ padding: 18 }}>
       <button onClick={() => setOpen(!open)} style={{ width: "100%", background: "none", border: "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: 0 }}>
-        <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: 0 }}>Thông tin công ty (in trên báo giá)</h2>
+        <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: 0 }}>Thông tin công ty (in trên báo giá)</h2>
         {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
       </button>
       {open && (
@@ -629,7 +838,7 @@ function CompanyInfoCard({ tour, setCompanyField }) {
 function PricingSettingsCard({ tour, setField, pricing }) {
   return (
     <div className="ta-card" style={{ padding: 18 }}>
-      <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+      <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
         <Percent size={17} /> Lợi nhuận & làm tròn giá
       </h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 14 }}>
@@ -642,7 +851,7 @@ function PricingSettingsCard({ tour, setField, pricing }) {
             <button key={m.key} onClick={() => setField("profitMode", m.key)} style={{
               textAlign: "left", padding: "10px 12px", borderRadius: 10,
               border: `1.5px solid ${active ? PALETTE.primary : PALETTE.border}`,
-              background: active ? PALETTE.primaryLight : PALETTE.surface, cursor: "pointer", fontFamily: "'Inter', sans-serif",
+              background: active ? PALETTE.primaryLight : PALETTE.surface, cursor: "pointer", fontFamily: "'Montserrat', sans-serif",
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: active ? PALETTE.primaryDark : PALETTE.ink }}>{m.label}</div>
             </button>
@@ -728,206 +937,121 @@ function ItineraryEditor({ tour, onChange }) {
 
 function DayCard({ day, onUpdate, onAddStop, onUpdateStop, onRemoveStop }) {
   const [collapsed, setCollapsed] = useState(false);
-  const editorRef = useRef(null);
-  const isComposing = useRef(false);
-
-  // Sync HTML content vào editor khi mới mount hoặc khi id thay đổi
-  useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== (day.content || "")) {
-      editorRef.current.innerHTML = day.content || "";
-    }
-  }, [day.id]);
-
-  const execCmd = (cmd, value = null) => {
-    editorRef.current?.focus();
-    document.execCommand(cmd, false, value);
-    handleContentChange();
-  };
-
-  const handleContentChange = () => {
-    const html = editorRef.current?.innerHTML || "";
-    onUpdate({ content: html });
-  };
-
-  // Nhóm bữa ăn gắn liền vào tiêu đề ngày — parse từ title hoặc meals field
   const meals = day.meals || [];
 
   return (
     <div className="ta-card" style={{ overflow: "hidden", borderRadius: 12 }}>
-      {/* Header accordion — kiểu RootTrip */}
-      <div
-        style={{
-          display: "flex", alignItems: "center", gap: 0,
-          background: collapsed ? PALETTE.primaryLight : PALETTE.primary,
-          cursor: "pointer", transition: "background .2s",
-        }}
-        onClick={() => setCollapsed(!collapsed)}
-      >
-        {/* Badge số ngày */}
-        <div style={{
-          minWidth: 52, alignSelf: "stretch", display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center", padding: "12px 0",
-          background: PALETTE.primaryDark, color: "white",
-        }}>
-          <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", opacity: 0.7 }}>NGÀY</span>
-          <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', serif", lineHeight: 1 }}>{day.dayNumber}</span>
+      {/* Header accordion kiểu RootTrip */}
+      <div style={{ display:"flex", alignItems:"center", background: collapsed ? PALETTE.primaryLight : PALETTE.primary, cursor:"pointer", transition:"background .2s" }}
+        onClick={() => setCollapsed(!collapsed)}>
+        <div style={{ minWidth:52, alignSelf:"stretch", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"12px 0", background:PALETTE.primaryDark, color:"white" }}>
+          <span style={{ fontSize:9, fontWeight:600, letterSpacing:"0.08em", opacity:0.7 }}>NGÀY</span>
+          <span style={{ fontSize:20, fontWeight:800, lineHeight:1 }}>{day.dayNumber}</span>
         </div>
-
-        {/* Tiêu đề */}
         <input
           className="ta-input"
-          placeholder={`Nhập tiêu đề ngày ${day.dayNumber} (VD: Đón sân bay – VinWonders – Grand World)`}
+          placeholder={`Tiêu đề ngày ${day.dayNumber} (VD: Đón sân bay – Tham quan – Ăn tối)`}
           value={day.title}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onUpdate({ title: e.target.value })}
-          style={{
-            flex: 1, background: "transparent", border: "none", outline: "none",
-            color: collapsed ? PALETTE.primaryDark : "white", fontWeight: 600, fontSize: 14,
-            padding: "0 14px",
-          }}
+          style={{ flex:1, background:"transparent", border:"none", outline:"none", color: collapsed ? PALETTE.primaryDark : "white", fontWeight:700, fontSize:13.5, padding:"0 14px", fontFamily:"'Montserrat',sans-serif" }}
         />
-
         {/* Tags bữa ăn */}
-        <div style={{ display: "flex", gap: 4, padding: "0 10px", flexShrink: 0 }}
-          onClick={(e) => e.stopPropagation()}>
-          {["Sáng", "Trưa", "Tối"].map((meal) => {
+        <div style={{ display:"flex", gap:4, padding:"0 10px", flexShrink:0 }} onClick={(e)=>e.stopPropagation()}>
+          {["Sáng","Trưa","Tối"].map((meal) => {
             const active = meals.includes(meal);
             return (
-              <button key={meal} onClick={() => {
-                const next = active ? meals.filter(m => m !== meal) : [...meals, meal];
-                onUpdate({ meals: next });
-              }} style={{
-                padding: "3px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                border: "none",
-                background: active ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.2)",
-                color: active ? PALETTE.primaryDark : "rgba(255,255,255,0.7)",
-              }}>
+              <button key={meal} onClick={()=>{
+                const next = active ? meals.filter(m=>m!==meal) : [...meals,meal];
+                onUpdate({meals:next});
+              }} style={{ padding:"3px 9px", borderRadius:20, fontSize:11, fontWeight:700, cursor:"pointer", border:"none",
+                background: active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.15)",
+                color: active ? PALETTE.primaryDark : "rgba(255,255,255,0.75)" }}>
                 {meal}
               </button>
             );
           })}
         </div>
-
-        <div style={{ padding: "0 12px", color: collapsed ? PALETTE.primary : "rgba(255,255,255,0.8)" }}>
-          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        <div style={{ padding:"0 12px", color: collapsed ? PALETTE.primary : "rgba(255,255,255,0.8)" }}>
+          {collapsed ? <ChevronDown size={18}/> : <ChevronUp size={18}/>}
         </div>
       </div>
 
-      {/* Body */}
       {!collapsed && (
         <div>
-          {/* Rich text toolbar */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 2, padding: "8px 12px",
-            borderBottom: `1px solid ${PALETTE.border}`, flexWrap: "wrap", background: PALETTE.surfaceAlt,
-          }}>
-            {[
-              { label: "B", cmd: "bold", style: { fontWeight: 700 } },
-              { label: "I", cmd: "italic", style: { fontStyle: "italic" } },
-              { label: "U", cmd: "underline", style: { textDecoration: "underline" } },
-            ].map(({ label, cmd, style }) => (
-              <button key={cmd} onMouseDown={(e) => { e.preventDefault(); execCmd(cmd); }}
-                style={{ ...style, padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
-                {label}
-              </button>
-            ))}
-            <div style={{ width: 1, height: 22, background: PALETTE.border, margin: "0 4px" }} />
-            <button onMouseDown={(e) => { e.preventDefault(); execCmd("insertUnorderedList"); }}
-              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
-              ☰ List
-            </button>
-            <button onMouseDown={(e) => { e.preventDefault(); execCmd("formatBlock", "h4"); }}
-              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
-              Tiêu đề
-            </button>
-            <button onMouseDown={(e) => { e.preventDefault(); execCmd("formatBlock", "p"); }}
-              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 13 }}>
-              Đoạn văn
-            </button>
-            <div style={{ width: 1, height: 22, background: PALETTE.border, margin: "0 4px" }} />
-            <button onMouseDown={(e) => { e.preventDefault(); execCmd("removeFormat"); }}
-              style={{ padding: "4px 9px", border: `1px solid ${PALETTE.border}`, borderRadius: 6, cursor: "pointer", background: PALETTE.surface, fontSize: 12, color: PALETTE.textMuted }}>
-              Xoá định dạng
-            </button>
-          </div>
+          {/* Rich text editor dùng chung RichTextCard — nhưng inline không có card wrapper */}
+          <InlineRichText value={day.content||""} onChange={(v)=>onUpdate({content:v})}
+            placeholder="Nhập nội dung lịch trình ngày này... (hỗ trợ in đậm, bullet list, tiêu đề)" />
 
-          {/* ContentEditable rich text area */}
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            onCompositionStart={() => { isComposing.current = true; }}
-            onCompositionEnd={() => { isComposing.current = false; handleContentChange(); }}
-            onInput={() => { if (!isComposing.current) handleContentChange(); }}
-            data-placeholder="Nhập nội dung lịch trình ngày này... (hỗ trợ in đậm, danh sách, tiêu đề)"
-            style={{
-              minHeight: 120, padding: "14px 18px", outline: "none",
-              fontSize: 13.5, lineHeight: 1.8, color: PALETTE.ink,
-            }}
-          />
-
-          {/* Điểm dừng có ảnh */}
-          <div style={{ padding: "0 18px 18px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, paddingTop: 14, borderTop: `1px solid ${PALETTE.border}` }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.textMuted, display: "flex", alignItems: "center", gap: 6 }}>
-                <Camera size={13} /> Ảnh điểm tham quan
+          {/* Ảnh điểm tham quan */}
+          <div style={{ padding:"0 16px 16px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8, paddingTop:12, borderTop:`1px solid ${PALETTE.border}` }}>
+              <span style={{ fontSize:12, fontWeight:600, color:PALETTE.textMuted, display:"flex", alignItems:"center", gap:5 }}>
+                <Camera size={13}/> Ảnh điểm tham quan
               </span>
-              <button className="ta-btn ta-btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={onAddStop}>
-                <Plus size={12} /> Thêm ảnh điểm
+              <button className="ta-btn ta-btn-ghost" style={{ padding:"3px 9px", fontSize:11 }} onClick={onAddStop}>
+                <Plus size={11}/> Thêm ảnh
               </button>
             </div>
-
             {day.stops.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:8 }}>
                 {day.stops.map((stop) => (
                   <StopCard key={stop.id} stop={stop}
-                    onUpdate={(patch) => onUpdateStop(stop.id, patch)}
-                    onRemove={() => onRemoveStop(stop.id)} />
+                    onUpdate={(patch)=>onUpdateStop(stop.id,patch)}
+                    onRemove={()=>onRemoveStop(stop.id)} />
                 ))}
               </div>
             )}
-
             {day.stops.length === 0 && (
-              <div style={{ fontSize: 12, color: PALETTE.textFaint, padding: "6px 0" }}>
-                Thêm ảnh điểm tham quan để hiển thị lưới ảnh trong bản gửi khách
-              </div>
+              <div style={{ fontSize:11.5, color:PALETTE.textFaint }}>Thêm ảnh điểm tham quan để hiển thị trong bản gửi khách</div>
             )}
           </div>
         </div>
       )}
-
-      <style>{`
-        [contenteditable]:empty:before {
-          content: attr(data-placeholder);
-          color: #9CA39D;
-          pointer-events: none;
-        }
-        [contenteditable] h4 { font-size: 14px; font-weight: 700; margin: 10px 0 4px; color: #0F5D52; }
-        [contenteditable] ul { margin: 6px 0 6px 20px; padding: 0; }
-        [contenteditable] li { margin-bottom: 3px; }
-        [contenteditable] p { margin: 4px 0; }
-      `}</style>
     </div>
   );
 }
 
-function StopCard({ stop, onUpdate, onRemove }) {
+/* Inline rich text toolbar — dùng trong DayCard (không có card wrapper) */
+function InlineRichText({ value, onChange, placeholder }) {
+  const editorRef = useRef(null);
+  const isComposing = useRef(false);
+  useEffect(()=>{
+    if(editorRef.current && editorRef.current.innerHTML!==(value||""))
+      editorRef.current.innerHTML = value||"";
+  }, []); // chỉ mount
+  const execCmd=(cmd,val=null)=>{editorRef.current?.focus();document.execCommand(cmd,false,val);onChange(editorRef.current?.innerHTML||"");};
   return (
-    <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
-      <div style={{ height: 100, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {!stop.imageUrl && <Camera size={20} color={PALETTE.textFaint} />}
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:4, padding:"7px 12px", background:PALETTE.surfaceAlt, borderBottom:`1px solid ${PALETTE.border}`, flexWrap:"wrap" }}>
+        {[["B","bold",{fontWeight:700}],["I","italic",{fontStyle:"italic"}],["U","underline",{textDecoration:"underline"}]].map(([label,cmd,st])=>(
+          <button key={cmd} onMouseDown={(e)=>{e.preventDefault();execCmd(cmd);}}
+            style={{...st, padding:"3px 9px", border:`1px solid ${PALETTE.border}`, borderRadius:6, cursor:"pointer", background:PALETTE.surface, fontSize:13}}>
+            {label}
+          </button>
+        ))}
+        <div style={{width:1,height:20,background:PALETTE.border,margin:"0 3px"}}/>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("insertUnorderedList");}} style={{ padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>☰ Bullet</button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("insertOrderedList");}} style={{ padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>1. Số</button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("formatBlock","h4");}} style={{ padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>Tiêu đề</button>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("formatBlock","p");}} style={{ padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:12}}>Đoạn</button>
+        <div style={{width:1,height:20,background:PALETTE.border,margin:"0 3px"}}/>
+        <button onMouseDown={(e)=>{e.preventDefault();execCmd("removeFormat");}} style={{ padding:"3px 9px",border:`1px solid ${PALETTE.border}`,borderRadius:6,cursor:"pointer",background:PALETTE.surface,fontSize:11,color:PALETTE.textMuted}}>✕ Xoá định dạng</button>
       </div>
-      <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <input className="ta-input" placeholder="Tên điểm" value={stop.name}
-          onChange={(e) => onUpdate({ name: e.target.value })}
-          style={{ padding: "5px 8px", fontSize: 12.5, fontWeight: 600 }} />
-        <input className="ta-input" placeholder="URL ảnh" value={stop.imageUrl}
-          onChange={(e) => onUpdate({ imageUrl: e.target.value })}
-          style={{ padding: "5px 8px", fontSize: 11 }} />
-      </div>
-      <button onClick={onRemove} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <X size={12} />
-      </button>
+      <div ref={editorRef} contentEditable suppressContentEditableWarning
+        onCompositionStart={()=>{isComposing.current=true;}}
+        onCompositionEnd={()=>{isComposing.current=false;onChange(editorRef.current?.innerHTML||"");}}
+        onInput={()=>{if(!isComposing.current)onChange(editorRef.current?.innerHTML||"");}}
+        data-placeholder={placeholder}
+        style={{ minHeight:110, padding:"14px 18px", outline:"none", fontSize:13.5, lineHeight:1.8, color:PALETTE.ink }}
+      />
+      <style>{`
+        [contenteditable]:empty:before{content:attr(data-placeholder);color:#9CA39D;pointer-events:none;}
+        [contenteditable] h4{font-size:14px;font-weight:700;margin:10px 0 4px;color:${PALETTE.primary};}
+        [contenteditable] ul,[contenteditable] ol{margin:6px 0 6px 20px;padding:0;}
+        [contenteditable] li{margin-bottom:3px;}
+        [contenteditable] p{margin:4px 0;}
+      `}</style>
     </div>
   );
 }
@@ -1049,7 +1173,7 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
 function SummaryPanel({ pricing, tour, onPreview }) {
   return (
     <div className="ta-card" style={{ padding: 20 }}>
-      <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
+      <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
         <Wallet size={17} /> Tổng kết tài chính
       </h2>
 
@@ -1096,9 +1220,30 @@ function Row({ label, value, muted, big, small }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
       <span style={{ fontSize: small ? 12 : 13, color: muted ? PALETTE.textMuted : PALETTE.ink }}>{label}</span>
-      <span style={{ fontSize: big ? 22 : small ? 12.5 : 14, fontWeight: big ? 700 : 600, color: big ? PALETTE.primaryDark : muted ? PALETTE.textMuted : PALETTE.ink, fontFamily: big ? "'Fraunces', serif" : "'Inter', sans-serif" }}>
+      <span style={{ fontSize: big ? 22 : small ? 12.5 : 14, fontWeight: big ? 700 : 600, color: big ? PALETTE.primaryDark : muted ? PALETTE.textMuted : PALETTE.ink, fontFamily: big ? "'Montserrat', sans-serif" : "'Montserrat', sans-serif" }}>
         {value}
       </span>
+    </div>
+  );
+}
+
+/* ============================================================
+   QUOTE PREVIEW / PRINT
+   ============================================================ */
+
+function StopCard({ stop, onUpdate, onRemove }) {
+  return (
+    <div style={{ position:"relative", borderRadius:10, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
+      <div style={{ height:90, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        {!stop.imageUrl && <Camera size={18} color={PALETTE.textFaint}/>}
+      </div>
+      <div style={{ padding:"8px 10px", display:"flex", flexDirection:"column", gap:4 }}>
+        <input className="ta-input" placeholder="Tên điểm" value={stop.name} onChange={(e)=>onUpdate({name:e.target.value})} style={{ padding:"5px 8px", fontSize:12.5, fontWeight:600 }}/>
+        <input className="ta-input" placeholder="URL ảnh" value={stop.imageUrl} onChange={(e)=>onUpdate({imageUrl:e.target.value})} style={{ padding:"5px 8px", fontSize:11 }}/>
+      </div>
+      <button onClick={onRemove} style={{ position:"absolute", top:6, right:6, background:"rgba(0,0,0,0.5)", border:"none", borderRadius:"50%", width:22, height:22, cursor:"pointer", color:"white", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <X size={12}/>
+      </button>
     </div>
   );
 }
@@ -1111,77 +1256,101 @@ function QuotePreview({ tour, onBack }) {
   const [mode, setMode] = useState("client");
   const [currency, setCurrency] = useState(tour.displayCurrency || "VND");
   const [exchangeRate, setExchangeRate] = useState(tour.exchangeRate || 25400);
+  const [shareLink, setShareLink] = useState(null);
+  const [sharing, setSharing] = useState(false);
   const pricing = tourPricing(tour);
   const handlePrint = () => window.print();
 
+  const handleShare = async () => {
+    setSharing(true);
+    try {
+      await publishTour(tour);
+      const url = `${window.location.origin}${window.location.pathname}?view=${tour.id}`;
+      setShareLink(url);
+      await navigator.clipboard.writeText(url).catch(()=>{});
+    } catch(e) {
+      console.error(e);
+    }
+    setSharing(false);
+  };
+
   return (
     <div>
-      <div className="no-print" style={{ position: "sticky", top: 0, zIndex: 10, background: "rgba(250,248,243,0.95)", backdropFilter: "blur(6px)", borderBottom: `1px solid ${PALETTE.border}` }}>
-        <div style={{ maxWidth: 900, margin: "0 auto", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <button className="ta-btn ta-btn-ghost" onClick={onBack}><ArrowLeft size={16} /> Quay lại chỉnh sửa</button>
-          <div style={{ display: "flex", gap: 6, background: PALETTE.surfaceAlt, padding: 4, borderRadius: 10 }}>
-            <button onClick={() => setMode("client")} className="ta-btn" style={{ background: mode === "client" ? PALETTE.surface : "transparent", border: "none", boxShadow: mode === "client" ? "0 1px 2px rgba(0,0,0,0.06)" : "none", color: mode === "client" ? PALETTE.ink : PALETTE.textMuted }}>
-              <FileText size={15} /> Lịch trình (gửi khách)
+      <div className="no-print" style={{ position:"sticky", top:0, zIndex:10, background:"rgba(250,248,243,0.95)", backdropFilter:"blur(6px)", borderBottom:`1px solid ${PALETTE.border}` }}>
+        <div style={{ maxWidth:900, margin:"0 auto", padding:"14px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+          <button className="ta-btn ta-btn-ghost" onClick={onBack}><ArrowLeft size={16}/> Quay lại chỉnh sửa</button>
+          <div style={{ display:"flex", gap:6, background:PALETTE.surfaceAlt, padding:4, borderRadius:10 }}>
+            <button onClick={()=>setMode("client")} className="ta-btn" style={{ background:mode==="client"?PALETTE.surface:"transparent", border:"none", boxShadow:mode==="client"?"0 1px 2px rgba(0,0,0,0.06)":"none", color:mode==="client"?PALETTE.ink:PALETTE.textMuted }}>
+              <FileText size={15}/> Lịch trình (gửi khách)
             </button>
-            <button onClick={() => setMode("internal")} className="ta-btn" style={{ background: mode === "internal" ? PALETTE.surface : "transparent", border: "none", boxShadow: mode === "internal" ? "0 1px 2px rgba(0,0,0,0.06)" : "none", color: mode === "internal" ? PALETTE.ink : PALETTE.textMuted }}>
-              <Wallet size={15} /> Bảng chiết tính
+            <button onClick={()=>setMode("internal")} className="ta-btn" style={{ background:mode==="internal"?PALETTE.surface:"transparent", border:"none", boxShadow:mode==="internal"?"0 1px 2px rgba(0,0,0,0.06)":"none", color:mode==="internal"?PALETTE.ink:PALETTE.textMuted }}>
+              <Wallet size={15}/> Bảng chiết tính
             </button>
           </div>
-          <button className="ta-btn ta-btn-primary" onClick={handlePrint}><Printer size={16} /> In / Xuất PDF</button>
+          <div style={{ display:"flex", gap:8 }}>
+            <button className="ta-btn ta-btn-ghost" onClick={handleShare} disabled={sharing}
+              style={{ borderColor: PALETTE.primary, color: PALETTE.primary }}>
+              <Share2 size={15}/> {sharing ? "Đang tạo..." : "Tạo link gửi khách"}
+            </button>
+            <button className="ta-btn ta-btn-primary" onClick={handlePrint}><Printer size={16}/> In / PDF</button>
+          </div>
         </div>
-        <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: PALETTE.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
-            <DollarSign size={13} /> Hiển thị tiền tệ:
+
+        {/* Share link banner */}
+        {shareLink && (
+          <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 12px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", background:PALETTE.primaryLight, borderRadius:10, border:`1px solid ${PALETTE.primary}` }}>
+              <Link size={14} color={PALETTE.primary}/>
+              <input readOnly value={shareLink} style={{ flex:1, border:"none", background:"transparent", fontSize:12.5, color:PALETTE.primaryDark, outline:"none", fontFamily:"'Montserrat',sans-serif" }}/>
+              <button className="ta-btn ta-btn-primary" style={{ padding:"5px 12px", fontSize:12 }}
+                onClick={()=>navigator.clipboard.writeText(shareLink).catch(()=>{})}>
+                Copy
+              </button>
+              <button onClick={()=>setShareLink(null)} style={{ background:"none", border:"none", cursor:"pointer", color:PALETTE.textFaint }}>
+                <X size={14}/>
+              </button>
+            </div>
+            <div style={{ fontSize:11, color:PALETTE.textMuted, marginTop:5, paddingLeft:2 }}>
+              ✓ Đã copy vào clipboard · Khách mở link này sẽ thấy trang báo giá online (không cần đăng nhập)
+            </div>
+          </div>
+        )}
+
+        {/* Currency bar */}
+        <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 12px", display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+          <span style={{ fontSize:12, color:PALETTE.textMuted, display:"flex", alignItems:"center", gap:5 }}>
+            <DollarSign size={13}/> Tiền tệ:
           </span>
-          <div style={{ display: "flex", gap: 4, background: PALETTE.surfaceAlt, padding: 3, borderRadius: 8 }}>
-            {["VND", "USD"].map((c) => (
-              <button
-                key={c}
-                onClick={() => setCurrency(c)}
-                className="ta-btn"
-                style={{
-                  padding: "5px 14px",
-                  fontSize: 12.5,
-                  background: currency === c ? PALETTE.surface : "transparent",
-                  border: "none",
-                  boxShadow: currency === c ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
-                  color: currency === c ? PALETTE.ink : PALETTE.textMuted,
-                  fontWeight: currency === c ? 600 : 500,
-                }}
-              >
+          <div style={{ display:"flex", gap:4, background:PALETTE.surfaceAlt, padding:3, borderRadius:8 }}>
+            {["VND","USD"].map((c)=>(
+              <button key={c} onClick={()=>setCurrency(c)} className="ta-btn"
+                style={{ padding:"5px 14px", fontSize:12.5, background:currency===c?PALETTE.surface:"transparent", border:"none", boxShadow:currency===c?"0 1px 2px rgba(0,0,0,0.06)":"none", color:currency===c?PALETTE.ink:PALETTE.textMuted, fontWeight:currency===c?600:500 }}>
                 {c}
               </button>
             ))}
           </div>
-          {currency === "USD" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: PALETTE.textMuted }}>Tỷ giá: 1 USD =</span>
-              <input
-                className="ta-input"
-                inputMode="numeric"
-                value={exchangeRate ? Number(exchangeRate).toLocaleString("vi-VN") : ""}
-                onChange={(e) => setExchangeRate(parseNum(e.target.value))}
-                style={{ width: 100, padding: "5px 8px", fontSize: 12.5 }}
-              />
-              <span style={{ fontSize: 12, color: PALETTE.textMuted }}>₫</span>
+          {currency==="USD" && (
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ fontSize:12, color:PALETTE.textMuted }}>1 USD =</span>
+              <input className="ta-input" inputMode="numeric" value={exchangeRate?Number(exchangeRate).toLocaleString("vi-VN"):""} onChange={(e)=>setExchangeRate(parseNum(e.target.value))} style={{ width:100, padding:"5px 8px", fontSize:12.5 }}/>
+              <span style={{ fontSize:12, color:PALETTE.textMuted }}>₫</span>
             </div>
           )}
         </div>
       </div>
 
-      <div style={{ padding: "32px 24px 80px" }}>
-        <div id="print-area" style={{ maxWidth: 794, margin: "0 auto" }}>
-          {mode === "client" ? (
-            <ClientItineraryDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate} />
+      <div style={{ padding:"32px 24px 80px" }}>
+        <div id="print-area" style={{ maxWidth:794, margin:"0 auto" }}>
+          {mode==="client" ? (
+            <ClientItineraryDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate}/>
           ) : (
-            <CostBreakdownDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate} />
+            <CostBreakdownDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate}/>
           )}
         </div>
       </div>
     </div>
   );
 }
-
 
 function DocShell({ children, noPadding }) {
   return (
@@ -1203,7 +1372,7 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
       <div style={{ padding: "40px 52px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${PALETTE.primary}` }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Fraunces', serif" }}>{tour.company.name}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Montserrat', sans-serif" }}>{tour.company.name}</div>
             <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 4, lineHeight: 1.6 }}>
               {tour.company.address && <div>{tour.company.address}</div>}
               <div>{tour.company.phone}{tour.company.email ? ` · ${tour.company.email}` : ""}</div>
@@ -1215,14 +1384,44 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
           </div>
         </div>
 
-        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 600, margin: "0 0 8px", color: PALETTE.ink }}>
+        <h1 style={{ fontFamily:"'Montserrat',sans-serif", fontSize:26, fontWeight:800, margin:"0 0 8px", color:PALETTE.ink }}>
           {tour.name || "Chương trình tour"}
         </h1>
-        <div style={{ display: "flex", gap: 18, fontSize: 13, color: PALETTE.textMuted, marginBottom: 28 }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapPin size={14} /> {tour.destination || "—"}</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Calendar size={14} /> {tour.durationDays} ngày {tour.durationDays > 1 ? `${tour.durationDays - 1} đêm` : ""}</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Users size={14} /> {pricing.pax} khách</span>
+        <div style={{ display:"flex", gap:18, fontSize:13, color:PALETTE.textMuted, marginBottom:24 }}>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}><MapPin size={14}/> {tour.destination||"—"}</span>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}><Calendar size={14}/> {tour.durationDays} ngày {tour.durationDays>1?`${tour.durationDays-1} đêm`:""}</span>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}><Users size={14}/> {pricing.pax} khách</span>
         </div>
+
+        {/* Điểm nổi bật */}
+        {tour.highlights && (
+          <div style={{ marginBottom:24, padding:"16px 20px", background:PALETTE.primaryLight, borderRadius:12, borderLeft:`4px solid ${PALETTE.primary}` }}>
+            <div style={{ fontSize:12, fontWeight:800, letterSpacing:"0.06em", color:PALETTE.primaryDark, marginBottom:8, textTransform:"uppercase" }}>✦ Điểm nổi bật</div>
+            <div style={{ fontSize:13, lineHeight:1.8, color:PALETTE.ink }} dangerouslySetInnerHTML={{ __html: tour.highlights }}/>
+          </div>
+        )}
+
+        {/* Tour bao gồm / không bao gồm */}
+        {((tour.includes||[]).length > 0 || (tour.excludes||[]).length > 0) && (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:24 }}>
+            {(tour.includes||[]).length > 0 && (
+              <div style={{ padding:"14px 16px", background:"#F0FAF6", borderRadius:10, border:`1px solid ${PALETTE.primaryLight}` }}>
+                <div style={{ fontSize:12, fontWeight:800, color:PALETTE.primary, marginBottom:8, textTransform:"uppercase" }}>✓ Tour bao gồm</div>
+                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:12.5, lineHeight:1.8, color:PALETTE.ink }}>
+                  {(tour.includes||[]).map((item,i)=> item && <li key={i}>{item}</li>)}
+                </ul>
+              </div>
+            )}
+            {(tour.excludes||[]).length > 0 && (
+              <div style={{ padding:"14px 16px", background:"#FDF4F3", borderRadius:10, border:`1px solid ${PALETTE.dangerLight}` }}>
+                <div style={{ fontSize:12, fontWeight:800, color:PALETTE.danger, marginBottom:8, textTransform:"uppercase" }}>✗ Không bao gồm</div>
+                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:12.5, lineHeight:1.8, color:PALETTE.ink }}>
+                  {(tour.excludes||[]).map((item,i)=> item && <li key={i}>{item}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {tour.itinerary.map((day) => (
@@ -1234,7 +1433,7 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
                   justifyContent: "center", padding: "10px 0", background: PALETTE.primaryDark, color: "white",
                 }}>
                   <span style={{ fontSize: 8, fontWeight: 600, letterSpacing: "0.08em", opacity: 0.7 }}>NGÀY</span>
-                  <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', serif", lineHeight: 1 }}>{day.dayNumber}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Montserrat', sans-serif", lineHeight: 1 }}>{day.dayNumber}</span>
                 </div>
                 <div style={{ flex: 1, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: "white", lineHeight: 1.4 }}>
@@ -1288,7 +1487,7 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
             <div style={{ fontSize: 12.5, color: PALETTE.primaryDark, fontWeight: 600 }}>Giá tour trọn gói</div>
             <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 2 }}>{money(pricing.sellPerPaxRounded)} / khách × {pricing.pax} khách</div>
           </div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Fraunces', serif" }}>{money(pricing.sellTotal)}</div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Montserrat', sans-serif" }}>{money(pricing.sellTotal)}</div>
         </div>
 
         <div style={{ marginTop: 20, fontSize: 11, color: PALETTE.textFaint, lineHeight: 1.6 }}>
@@ -1308,7 +1507,7 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
   return (
     <DocShell>
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>BẢNG CHIẾT TÍNH</h1>
+        <h1 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>BẢNG CHIẾT TÍNH</h1>
         <div style={{ fontSize: 15, fontWeight: 600, color: PALETTE.primary }}>{tour.name || "Tour chưa đặt tên"}</div>
         <div style={{ fontSize: 12.5, color: PALETTE.textMuted, marginTop: 4 }}>
           {tour.durationDays} ngày {tour.durationDays > 1 ? `${tour.durationDays - 1} đêm` : ""} · {pricing.pax} khách
@@ -1400,7 +1599,7 @@ function SummaryLine({ label, value, highlight, bold, big }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: big ? "12px 16px" : "9px 16px", background: bg, borderTop: `1px solid ${PALETTE.border}` }}>
       <span style={{ fontSize: big ? 13 : 12, fontWeight: bold ? 700 : 500, color }}>{label}</span>
-      <span style={{ fontSize: big ? 18 : 13.5, fontWeight: bold ? 700 : 600, color, fontFamily: big ? "'Fraunces', serif" : "'Inter', sans-serif" }}>{value}</span>
+      <span style={{ fontSize: big ? 18 : 13.5, fontWeight: bold ? 700 : 600, color, fontFamily: big ? "'Montserrat', sans-serif" : "'Montserrat', sans-serif" }}>{value}</span>
     </div>
   );
 }
@@ -1413,4 +1612,149 @@ function toRoman(num) {
     while (n >= val) { result += sym; n -= val; }
   }
   return result;
+}
+
+/* ============================================================
+   PUBLIC TOUR VIEW — trang khách xem qua link
+   ============================================================ */
+
+function PublicTourView({ tour }) {
+  const pricing = tourPricing(tour);
+  const [currency, setCurrency] = useState(tour.displayCurrency || "VND");
+  const [exchangeRate] = useState(tour.exchangeRate || 25400);
+  const money = (vnd) => formatMoney(vnd, currency, exchangeRate);
+
+  return (
+    <div style={{ minHeight:"100vh", background:PALETTE.bg, fontFamily:"'Montserrat',sans-serif" }}>
+      {/* Topbar */}
+      <div style={{ background:PALETTE.primary, padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ color:"white", fontWeight:700, fontSize:15 }}>{tour.company?.name || "Báo giá tour"}</div>
+        <div style={{ display:"flex", gap:6 }}>
+          {["VND","USD"].map((c)=>(
+            <button key={c} onClick={()=>setCurrency(c)} style={{
+              padding:"4px 12px", borderRadius:20, fontSize:11.5, fontWeight:700, cursor:"pointer", border:"none",
+              background: currency===c ? "white" : "rgba(255,255,255,0.2)",
+              color: currency===c ? PALETTE.primaryDark : "white",
+            }}>{c}</button>
+          ))}
+          <button className="ta-btn ta-btn-primary" onClick={()=>window.print()} style={{ padding:"6px 14px", fontSize:12, marginLeft:8 }}>
+            <Printer size={13}/> In / PDF
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:860, margin:"0 auto", padding:"32px 24px 80px" }}>
+        {/* Cover */}
+        {tour.coverImageUrl && (
+          <div style={{ height:240, borderRadius:16, overflow:"hidden", marginBottom:24, background:`url(${tour.coverImageUrl}) center/cover` }}/>
+        )}
+
+        {/* Header */}
+        <h1 style={{ fontSize:28, fontWeight:800, margin:"0 0 8px", color:PALETTE.ink }}>{tour.name || "Chương trình tour"}</h1>
+        <div style={{ display:"flex", gap:16, fontSize:13, color:PALETTE.textMuted, marginBottom:24, flexWrap:"wrap" }}>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}><MapPin size={14}/> {tour.destination||"—"}</span>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}><Calendar size={14}/> {tour.durationDays} ngày {tour.durationDays>1?`${tour.durationDays-1} đêm`:""}</span>
+          {tour.startDate && <span style={{ display:"flex", alignItems:"center", gap:5 }}><Calendar size={14}/> Khởi hành: {tour.startDate}</span>}
+        </div>
+
+        {/* Giá nổi bật */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"18px 24px", background:PALETTE.primary, borderRadius:14, marginBottom:24, flexWrap:"wrap", gap:12 }}>
+          <div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)", textTransform:"uppercase", letterSpacing:"0.08em" }}>Giá tour trọn gói / khách</div>
+            <div style={{ fontSize:30, fontWeight:800, color:"white" }}>{money(pricing.sellPerPaxRounded)}</div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)" }}>Tổng đoàn ({pricing.pax} khách)</div>
+            <div style={{ fontSize:18, fontWeight:700, color:"rgba(255,255,255,0.9)" }}>{money(pricing.sellTotal)}</div>
+          </div>
+        </div>
+
+        {/* Điểm nổi bật */}
+        {tour.highlights && (
+          <div style={{ marginBottom:24, padding:"16px 20px", background:PALETTE.primaryLight, borderRadius:12, borderLeft:`4px solid ${PALETTE.primary}` }}>
+            <div style={{ fontSize:11.5, fontWeight:800, letterSpacing:"0.06em", color:PALETTE.primaryDark, marginBottom:8, textTransform:"uppercase" }}>✦ Điểm nổi bật</div>
+            <div style={{ fontSize:13.5, lineHeight:1.8, color:PALETTE.ink }} dangerouslySetInnerHTML={{ __html: tour.highlights }}/>
+          </div>
+        )}
+
+        {/* Includes / Excludes */}
+        {((tour.includes||[]).length > 0 || (tour.excludes||[]).length > 0) && (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:24 }}>
+            {(tour.includes||[]).length > 0 && (
+              <div style={{ padding:"16px 18px", background:"#F0FAF6", borderRadius:12, border:`1px solid ${PALETTE.primaryLight}` }}>
+                <div style={{ fontSize:11.5, fontWeight:800, color:PALETTE.primary, marginBottom:10, textTransform:"uppercase" }}>✓ Tour bao gồm</div>
+                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:13, lineHeight:2, color:PALETTE.ink }}>
+                  {(tour.includes||[]).filter(Boolean).map((item,i)=><li key={i}>{item}</li>)}
+                </ul>
+              </div>
+            )}
+            {(tour.excludes||[]).length > 0 && (
+              <div style={{ padding:"16px 18px", background:"#FDF4F3", borderRadius:12, border:`1px solid ${PALETTE.dangerLight}` }}>
+                <div style={{ fontSize:11.5, fontWeight:800, color:PALETTE.danger, marginBottom:10, textTransform:"uppercase" }}>✗ Không bao gồm</div>
+                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:13, lineHeight:2, color:PALETTE.ink }}>
+                  {(tour.excludes||[]).filter(Boolean).map((item,i)=><li key={i}>{item}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Lịch trình */}
+        <h2 style={{ fontSize:18, fontWeight:800, margin:"0 0 14px", color:PALETTE.ink }}>Lịch trình chi tiết</h2>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {tour.itinerary.map((day) => (
+            <div key={day.id} style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
+              <div style={{ display:"flex", alignItems:"stretch", background:PALETTE.primary }}>
+                <div style={{ minWidth:56, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"12px 0", background:PALETTE.primaryDark, color:"white" }}>
+                  <span style={{ fontSize:8, fontWeight:600, opacity:0.7, letterSpacing:"0.08em" }}>NGÀY</span>
+                  <span style={{ fontSize:22, fontWeight:800, lineHeight:1 }}>{day.dayNumber}</span>
+                </div>
+                <div style={{ flex:1, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:"white" }}>{day.title||`Ngày ${day.dayNumber}`}</div>
+                  {day.meals && day.meals.length > 0 && (
+                    <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+                      {day.meals.map((meal)=>(
+                        <span key={meal} style={{ padding:"2px 9px", borderRadius:20, fontSize:10.5, fontWeight:600, background:"rgba(255,255,255,0.2)", color:"white" }}>
+                          Ăn {meal.toLowerCase()}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{ padding:"16px 20px" }}>
+                {(day.content||day.summary) ? (
+                  <div style={{ fontSize:13.5, lineHeight:1.8 }} dangerouslySetInnerHTML={{ __html: day.content||`<p>${day.summary}</p>` }}/>
+                ) : (
+                  <div style={{ fontSize:12.5, color:PALETTE.textFaint, fontStyle:"italic" }}>Chưa có nội dung</div>
+                )}
+                {day.stops.length > 0 && (
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:8, marginTop:14 }}>
+                    {day.stops.map((stop)=>(
+                      <div key={stop.id} style={{ borderRadius:8, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
+                        <div style={{ height:80, background:stop.imageUrl?`url(${stop.imageUrl}) center/cover`:PALETTE.surfaceAlt }}/>
+                        {stop.name && <div style={{ padding:"6px 8px", fontSize:11.5, fontWeight:600 }}>{stop.name}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer liên hệ */}
+        <div style={{ marginTop:32, padding:"20px 24px", background:PALETTE.surfaceAlt, borderRadius:12, textAlign:"center" }}>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>{tour.company?.name}</div>
+          <div style={{ fontSize:13, color:PALETTE.textMuted }}>
+            {tour.company?.phone}{tour.company?.email ? ` · ${tour.company.email}` : ""}
+            {tour.company?.address ? ` · ${tour.company.address}` : ""}
+          </div>
+          <div style={{ fontSize:11, color:PALETTE.textFaint, marginTop:8 }}>
+            Báo giá có giá trị tham khảo. Liên hệ để được xác nhận và đặt tour.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
