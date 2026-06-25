@@ -1174,7 +1174,7 @@ function SummaryPanel({ pricing, tour, onPreview }) {
   return (
     <div className="ta-card" style={{ padding: 20 }}>
       <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
-        <Wallet size={17} /> Tổng kết tài chính
+        <Wallet size={17} /> CHI PHÍ TRÊN MỘT KHÁCH
       </h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
