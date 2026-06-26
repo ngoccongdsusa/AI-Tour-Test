@@ -1,0 +1,45 @@
+steps:
+  # Bước 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/bao-gia-tour:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/bao-gia-tour:latest'
+      - '.'
+
+  # Bước 2: Push image lên Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/bao-gia-tour:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/bao-gia-tour:latest'
+
+  # Bước 3: Deploy lên Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'bao-gia-tour'
+      - '--image=gcr.io/$PROJECT_ID/bao-gia-tour:$COMMIT_SHA'
+      - '--region=asia-southeast1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+      - '--memory=256Mi'
+      - '--cpu=1'
+      - '--min-instances=0'
+      - '--max-instances=10'
+
+images:
+  - 'gcr.io/$PROJECT_ID/bao-gia-tour:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/bao-gia-tour:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
