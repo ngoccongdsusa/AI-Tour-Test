@@ -197,18 +197,34 @@ async function saveTours(tours) {
   }
 }
 
-// Tạo link chia sẻ bằng cách encode toàn bộ dữ liệu tour vào URL hash (base64)
-// Không cần server, không cần window.storage — hoạt động trên mọi hosting
+// Encode sang base64url (URL-safe: thay +/= bằng -_~)
+function toBase64Url(str) {
+  // Dùng TextEncoder để xử lý đúng Unicode/tiếng Việt
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "~");
+}
+
+function fromBase64Url(encoded) {
+  const base64 = encoded
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .replace(/~/g, "=");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 async function publishTour(tour) {
   try {
-    // Chỉ lấy các trường cần thiết cho bản xem khách (bỏ ghi chú nội bộ)
-    const publicData = {
-      ...tour,
-      notes: "", // ẩn ghi chú nội bộ
-    };
+    const publicData = { ...tour, notes: "" }; // ẩn ghi chú nội bộ
     const json = JSON.stringify(publicData);
-    const encoded = btoa(unescape(encodeURIComponent(json)));
-    return encoded;
+    return toBase64Url(json);
   } catch (e) {
     console.error("Encode tour failed", e);
     return null;
@@ -217,9 +233,10 @@ async function publishTour(tour) {
 
 async function loadPublicTour(encoded) {
   try {
-    const json = decodeURIComponent(escape(atob(encoded)));
+    const json = fromBase64Url(encoded);
     return JSON.parse(json);
-  } catch {
+  } catch (e) {
+    console.error("Decode tour failed", e);
     return null;
   }
 }
@@ -227,15 +244,15 @@ async function loadPublicTour(encoded) {
 // Đọc dữ liệu tour từ URL hash: /#/view/BASE64DATA
 function getPublicTourDataFromUrl() {
   try {
-    const hash = window.location.hash; // "#/view/BASE64..."
-    if (hash.startsWith("#/view/")) {
-      return hash.slice(7); // lấy phần base64 sau "#/view/"
+    // Lấy hash thô, bỏ ký tự # đầu
+    const hash = window.location.hash.slice(1); // "/view/BASE64..."
+    if (hash.startsWith("/view/")) {
+      return hash.slice(6); // lấy phần base64url sau "/view/"
     }
-    // Tương thích ngược với ?view= (phòng khi link cũ còn tồn tại)
-    const params = new URLSearchParams(window.location.search);
-    const v = params.get("view");
-    return v || null;
-  } catch { return null; }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /* ============================================================
@@ -366,15 +383,20 @@ export default function App() {
     if (publicTour === "not_found") {
       return (
         <div style={styles.loadingScreen}>
-          <GlobalStyle/>
-          <p style={{ color: PALETTE.textMuted }}>Không tìm thấy báo giá. Link có thể đã hết hạn.</p>
+          <GlobalStyle />
+          <Compass size={36} color={PALETTE.textFaint} />
+          <p style={{ color: PALETTE.textMuted, fontSize: 14, marginTop: 12 }}>
+            Không tìm thấy báo giá hoặc link đã hết hạn.
+          </p>
         </div>
       );
     }
     return (
       <div style={styles.appShell}>
-        <GlobalStyle/>
-        <PublicTourView tour={publicTour}/>
+        <GlobalStyle />
+        <PublicTourErrorBoundary>
+          <PublicTourView tour={publicTour} />
+        </PublicTourErrorBoundary>
       </div>
     );
   }
@@ -1721,6 +1743,40 @@ function toRoman(num) {
     while (n >= val) { result += sym; n -= val; }
   }
   return result;
+}
+
+/* ============================================================
+   ERROR BOUNDARY — bắt crash khi render public tour
+   ============================================================ */
+
+class PublicTourErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "#FAF8F3", fontFamily: "'Montserrat',sans-serif", padding: 24 }}>
+          <Compass size={40} color="#9CA39D" />
+          <p style={{ fontSize: 15, fontWeight: 600, color: "#1C2B28" }}>Không thể hiển thị báo giá</p>
+          <p style={{ fontSize: 13, color: "#6B7570", maxWidth: 360, textAlign: "center" }}>
+            Link có thể bị hỏng hoặc dữ liệu tour quá lớn. Vui lòng yêu cầu người gửi tạo lại link mới.
+          </p>
+          <details style={{ fontSize: 11, color: "#9CA39D", maxWidth: 400 }}>
+            <summary style={{ cursor: "pointer" }}>Chi tiết lỗi</summary>
+            <pre style={{ marginTop: 8, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+              {this.state.error?.message}
+            </pre>
+          </details>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 /* ============================================================
