@@ -109,6 +109,10 @@ const formatUSD = (n) => {
 // Alias để tránh sửa nhiều chỗ
 const formatVND = formatUSD;
 
+// formatMoney — giữ lại để không crash các chỗ đang dùng
+// currency và exchangeRate không còn dùng, luôn trả về USD
+const formatMoney = (amount) => formatUSD(amount);
+
 const parseNum = (v) => {
   const n = parseFloat(String(v).replace(/[^\d.-]/g, ""));
   return isNaN(n) ? 0 : n;
@@ -137,7 +141,7 @@ function categoryTotal(category, pax) {
 
 function tourCostTotal(tour) {
   const pax = Math.max(1, Number(tour.pax) || 1);
-  return tour.costCategories.reduce((sum, cat) => sum + categoryTotal(cat, pax), 0);
+  return (tour.costCategories || []).reduce((sum, cat) => sum + categoryTotal(cat, pax), 0);
 }
 
 function tourPricing(tour) {
@@ -973,7 +977,7 @@ function ItineraryEditor({ tour, onChange }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {tour.itinerary.map((day) => (
+      {(tour.itinerary || []).map((day) => (
         <DayCard
           key={day.id}
           day={day}
@@ -1149,7 +1153,7 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {tour.costCategories.map((cat, catIdx) => {
+        {(tour.costCategories || []).map((cat, catIdx) => {
           const total = categoryTotal(cat, pax);
           const totalTourCat = cat.items.reduce((s, item) => s + itemAmounts(item, pax).totalTourAfterVat, 0);
           return (
@@ -1234,7 +1238,7 @@ function SummaryPanel({ pricing, tour, onPreview }) {
       </h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-        {tour.costCategories.map((cat) => {
+        {(tour.costCategories || []).map((cat) => {
           const total = categoryTotal(cat, pricing.pax);
           if (total === 0) return null;
           return (
@@ -1420,8 +1424,10 @@ function DocShell({ children, noPadding }) {
 
 /* ---------- Client-facing itinerary with photos ---------- */
 
-function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25400 }) {
-  const money = (vnd) => formatMoney(vnd, currency, exchangeRate);
+function ClientItineraryDoc({ tour, pricing, currency = "USD", exchangeRate = 1 }) {
+  const money = (n) => formatMoney(n);
+  const company = tour.company || {};
+  const itinerary = tour.itinerary || [];
   return (
     <DocShell noPadding>
       {tour.coverImageUrl && (
@@ -1430,10 +1436,10 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
       <div style={{ padding: "40px 52px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${PALETTE.primary}` }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Montserrat', sans-serif" }}>{tour.company.name}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: PALETTE.primaryDark, fontFamily: "'Montserrat', sans-serif" }}>{company.name}</div>
             <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 4, lineHeight: 1.6 }}>
-              {tour.company.address && <div>{tour.company.address}</div>}
-              <div>{tour.company.phone}{tour.company.email ? ` · ${tour.company.email}` : ""}</div>
+              {company.address && <div>{company.address}</div>}
+              <div>{company.phone}{company.email ? ` · ${company.email}` : ""}</div>
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -1482,7 +1488,7 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {tour.itinerary.map((day) => (
+          {itinerary.map((day) => (
             <div key={day.id} style={{ pageBreakInside: "avoid", borderRadius: 12, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
               {/* Header ngày — đúng kiểu RootTrip */}
               <div style={{ display: "flex", alignItems: "stretch", background: PALETTE.primary }}>
@@ -1562,8 +1568,8 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
 
 /* ---------- Thông tin người báo giá — dùng chung trong cả 2 bản in ---------- */
 function AgentBlock({ tour }) {
-  const agent = tour.agent || {};
-  const company = tour.company || {};
+  const agent = tour?.agent || {};
+  const company = tour?.company || {};
   const hasAgent = agent.name || agent.phone || agent.email;
   if (!hasAgent && !company.name) return null;
 
@@ -1598,8 +1604,9 @@ function AgentBlock({ tour }) {
 
 /* ---------- Internal cost breakdown — TourAI style table ---------- */
 
-function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 25400 }) {
-  const money = (vnd) => formatMoney(vnd, currency, exchangeRate);
+function CostBreakdownDoc({ tour, pricing, currency = "USD", exchangeRate = 1 }) {
+  const money = (n) => formatMoney(n);
+  const costCategories = tour.costCategories || [];
   return (
     <DocShell>
       <div style={{ marginBottom: 20 }}>
@@ -1625,7 +1632,7 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
           <div style={cellHead}>ĐVT</div>
         </div>
 
-        {tour.costCategories.map((cat, catIdx) => {
+        {costCategories.map((cat, catIdx) => {
           const total = categoryTotal(cat, pricing.pax);
           const totalTourCat = cat.items.reduce((s, item) => s + itemAmounts(item, pricing.pax).totalTourAfterVat, 0);
           return (
@@ -1722,9 +1729,8 @@ function toRoman(num) {
 
 function PublicTourView({ tour }) {
   const pricing = tourPricing(tour);
-  const [currency, setCurrency] = useState(tour.displayCurrency || "VND");
-  const [exchangeRate] = useState(tour.exchangeRate || 25400);
-  const money = (vnd) => formatMoney(vnd, currency, exchangeRate);
+  const money = (n) => formatMoney(n);
+  const itinerary = tour.itinerary || [];
 
   return (
     <div style={{ minHeight:"100vh", background:PALETTE.bg, fontFamily:"'Montserrat',sans-serif" }}>
@@ -1732,14 +1738,7 @@ function PublicTourView({ tour }) {
       <div style={{ background:PALETTE.primary, padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div style={{ color:"white", fontWeight:700, fontSize:15 }}>{tour.company?.name || "Báo giá tour"}</div>
         <div style={{ display:"flex", gap:6 }}>
-          {["VND","USD"].map((c)=>(
-            <button key={c} onClick={()=>setCurrency(c)} style={{
-              padding:"4px 12px", borderRadius:20, fontSize:11.5, fontWeight:700, cursor:"pointer", border:"none",
-              background: currency===c ? "white" : "rgba(255,255,255,0.2)",
-              color: currency===c ? PALETTE.primaryDark : "white",
-            }}>{c}</button>
-          ))}
-          <button className="ta-btn ta-btn-primary" onClick={()=>window.print()} style={{ padding:"6px 14px", fontSize:12, marginLeft:8 }}>
+          <button className="ta-btn ta-btn-primary" onClick={()=>window.print()} style={{ padding:"6px 14px", fontSize:12 }}>
             <Printer size={13}/> In / PDF
           </button>
         </div>
@@ -1804,7 +1803,7 @@ function PublicTourView({ tour }) {
         {/* Lịch trình */}
         <h2 style={{ fontSize:18, fontWeight:800, margin:"0 0 14px", color:PALETTE.ink }}>Lịch trình chi tiết</h2>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          {tour.itinerary.map((day) => (
+          {itinerary.map((day) => (
             <div key={day.id} style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
               <div style={{ display:"flex", alignItems:"stretch", background:PALETTE.primary }}>
                 <div style={{ minWidth:56, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"12px 0", background:PALETTE.primaryDark, color:"white" }}>
