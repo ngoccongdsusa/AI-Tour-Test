@@ -193,31 +193,44 @@ async function saveTours(tours) {
   }
 }
 
-// Lưu/tải báo giá public qua window.storage (shared) để tạo link gửi khách
+// Tạo link chia sẻ bằng cách encode toàn bộ dữ liệu tour vào URL hash (base64)
+// Không cần server, không cần window.storage — hoạt động trên mọi hosting
 async function publishTour(tour) {
   try {
-    const key = `public:${tour.id}`;
-    await window.storage.set(key, JSON.stringify(tour), true);
-    return key;
+    // Chỉ lấy các trường cần thiết cho bản xem khách (bỏ ghi chú nội bộ)
+    const publicData = {
+      ...tour,
+      notes: "", // ẩn ghi chú nội bộ
+    };
+    const json = JSON.stringify(publicData);
+    const encoded = btoa(unescape(encodeURIComponent(json)));
+    return encoded;
   } catch (e) {
-    // Fallback: encode vào URL hash (giới hạn ~2KB)
+    console.error("Encode tour failed", e);
     return null;
   }
 }
 
-async function loadPublicTour(tourId) {
+async function loadPublicTour(encoded) {
   try {
-    const res = await window.storage.get(`public:${tourId}`, true);
-    if (res) return JSON.parse(res.value);
-  } catch {}
-  return null;
+    const json = decodeURIComponent(escape(atob(encoded)));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 }
 
-// Kiểm tra URL có phải link xem public không
-function getPublicTourIdFromUrl() {
+// Đọc dữ liệu tour từ URL hash: /#/view/BASE64DATA
+function getPublicTourDataFromUrl() {
   try {
+    const hash = window.location.hash; // "#/view/BASE64..."
+    if (hash.startsWith("#/view/")) {
+      return hash.slice(7); // lấy phần base64 sau "#/view/"
+    }
+    // Tương thích ngược với ?view= (phòng khi link cũ còn tồn tại)
     const params = new URLSearchParams(window.location.search);
-    return params.get("view") || null;
+    const v = params.get("view");
+    return v || null;
   } catch { return null; }
 }
 
@@ -333,9 +346,9 @@ export default function App() {
 
   useEffect(() => {
     // Kiểm tra xem có phải link xem public không
-    const publicId = getPublicTourIdFromUrl();
-    if (publicId) {
-      loadPublicTour(publicId).then((t) => {
+    const encoded = getPublicTourDataFromUrl();
+    if (encoded) {
+      loadPublicTour(encoded).then((t) => {
         if (t) setPublicTour(t);
         else setPublicTour("not_found");
       });
@@ -1307,11 +1320,13 @@ function QuotePreview({ tour, onBack }) {
   const handleShare = async () => {
     setSharing(true);
     try {
-      await publishTour(tour);
-      const url = `${window.location.origin}${window.location.pathname}?view=${tour.id}`;
-      setShareLink(url);
-      await navigator.clipboard.writeText(url).catch(()=>{});
-    } catch(e) {
+      const encoded = await publishTour(tour);
+      if (encoded) {
+        const url = `${window.location.origin}${window.location.pathname}#/view/${encoded}`;
+        setShareLink(url);
+        await navigator.clipboard.writeText(url).catch(() => {});
+      }
+    } catch (e) {
       console.error(e);
     }
     setSharing(false);
