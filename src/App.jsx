@@ -73,14 +73,23 @@ const newTour = () => ({
   profitPercent: 10,
   profitFixed: 0,
   roundTo: 10000, // làm tròn giá bán đến bội số này (VNĐ)
-  displayCurrency: "VND", // "VND" | "USD" — chỉ ảnh hưởng cách hiển thị, dữ liệu gốc luôn lưu bằng VND
-  exchangeRate: 25400, // 1 USD = bao nhiêu VNĐ, dùng để quy đổi khi hiển thị USD
+  displayCurrency: "USD",
+  exchangeRate: 1,
   notes: "",
   company: {
     name: "Công ty Du lịch Việt Hành",
     phone: "0931 08 88 09",
     email: "info@viethanh-tour.vn",
     address: "",
+    website: "",
+    logo: "",
+  },
+  agent: {
+    name: "",
+    title: "",   // Chức danh
+    phone: "",
+    email: "",
+    zalo: "",
   },
   itinerary: [newDay(1)],
   createdAt: Date.now(),
@@ -91,21 +100,14 @@ const newTour = () => ({
    HELPERS
    ============================================================ */
 
-const formatVND = (n) => {
-  const v = Math.round(Number(n) || 0);
-  return v.toLocaleString("vi-VN") + " ₫";
+// Tất cả số tiền hiển thị bằng USD
+const formatUSD = (n) => {
+  const v = Number(n) || 0;
+  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Format an amount (always stored internally in VND) into the chosen display currency
-const formatMoney = (amountVnd, currency, exchangeRate) => {
-  const n = Number(amountVnd) || 0;
-  if (currency === "USD") {
-    const rate = Number(exchangeRate) || 1;
-    const usd = n / rate;
-    return "$" + usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-  return formatVND(n);
-};
+// Alias để tránh sửa nhiều chỗ
+const formatVND = formatUSD;
 
 const parseNum = (v) => {
   const n = parseFloat(String(v).replace(/[^\d.-]/g, ""));
@@ -119,12 +121,14 @@ function roundTo(value, step) {
 
 // Compute totals for a single cost item, given pax count
 function itemAmounts(item, pax) {
-  // Thành tiền = SL × Đêm/Lượt/Bữa × Đơn giá
-  const base = (Number(item.unitCost) || 0) * (Number(item.qty) || 0) * (Number(item.sessions) || 1);
-  const beforeVat = item.splitByPax && pax > 0 ? base / pax : base;
+  // Tổng chi phí tour = Đơn giá × SL × Đêm/Lượt/Bữa (chưa chia khách)
+  const totalTour = (Number(item.unitCost) || 0) * (Number(item.qty) || 0) * (Number(item.sessions) || 1);
+  // Chi phí/khách = totalTour / pax (nếu splitByPax) hoặc giữ nguyên
+  const beforeVat = item.splitByPax && pax > 0 ? totalTour / pax : totalTour;
   const vat = beforeVat * ((Number(item.vatPercent) || 0) / 100);
   const afterVat = beforeVat + vat;
-  return { beforeVat, vat, afterVat };
+  const totalTourAfterVat = item.splitByPax ? afterVat * pax : afterVat;
+  return { totalTour, beforeVat, vat, afterVat, totalTourAfterVat };
 }
 
 function categoryTotal(category, pax) {
@@ -576,6 +580,7 @@ function TourEditor({ tour, onChange, onBack, onPreview, showToast }) {
   const pricing = tourPricing(tour);
   const setField = (key, value) => onChange((t) => ({ ...t, [key]: value }));
   const setCompanyField = (key, value) => onChange((t) => ({ ...t, company: { ...t.company, [key]: value } }));
+  const setAgentField = (key, value) => onChange((t) => ({ ...t, agent: { ...(t.agent || {}), [key]: value } }));
 
   const setDuration = (days) => {
     days = Math.max(1, Math.min(60, days));
@@ -635,7 +640,7 @@ function TourEditor({ tour, onChange, onBack, onPreview, showToast }) {
           </div>
 
           <PricingSettingsCard tour={tour} setField={setField} pricing={pricing} />
-          <CompanyInfoCard tour={tour} setCompanyField={setCompanyField} />
+          <CompanyInfoCard tour={tour} setCompanyField={setCompanyField} setAgentField={setAgentField} />
 
           <div className="ta-card" style={{ padding: 18 }}>
             <label style={labelStyle}>Ghi chú nội bộ</label>
@@ -815,20 +820,64 @@ function TourBasicsCard({ tour, setField, setDuration }) {
   );
 }
 
-function CompanyInfoCard({ tour, setCompanyField }) {
+function CompanyInfoCard({ tour, setCompanyField, setAgentField }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="ta-card" style={{ padding: 18 }}>
-      <button onClick={() => setOpen(!open)} style={{ width: "100%", background: "none", border: "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: 0 }}>
-        <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 18, margin: 0 }}>Thông tin công ty (in trên báo giá)</h2>
+    <div className="ta-card" style={{ overflow: "hidden" }}>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", background: "none", border: "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: "16px 18px" }}>
+        <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 16, fontWeight: 700, margin: 0 }}>
+          🏢 Thông tin công ty & Người báo giá
+        </h2>
         {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
       </button>
       {open && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
-          <Field label="Tên công ty" span={2}><input className="ta-input" value={tour.company.name} onChange={(e) => setCompanyField("name", e.target.value)} /></Field>
-          <Field label="Số điện thoại"><input className="ta-input" value={tour.company.phone} onChange={(e) => setCompanyField("phone", e.target.value)} /></Field>
-          <Field label="Email"><input className="ta-input" value={tour.company.email} onChange={(e) => setCompanyField("email", e.target.value)} /></Field>
-          <Field label="Địa chỉ" span={2}><input className="ta-input" value={tour.company.address} onChange={(e) => setCompanyField("address", e.target.value)} /></Field>
+        <div style={{ padding: "0 18px 18px", display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Thông tin công ty */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: PALETTE.primary, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Thông tin công ty</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Field label="Tên công ty" span={2}>
+                <input className="ta-input" value={tour.company.name} onChange={(e) => setCompanyField("name", e.target.value)} />
+              </Field>
+              <Field label="Số điện thoại">
+                <input className="ta-input" value={tour.company.phone} onChange={(e) => setCompanyField("phone", e.target.value)} />
+              </Field>
+              <Field label="Email">
+                <input className="ta-input" value={tour.company.email} onChange={(e) => setCompanyField("email", e.target.value)} />
+              </Field>
+              <Field label="Website">
+                <input className="ta-input" placeholder="https://..." value={tour.company.website || ""} onChange={(e) => setCompanyField("website", e.target.value)} />
+              </Field>
+              <Field label="Địa chỉ">
+                <input className="ta-input" value={tour.company.address} onChange={(e) => setCompanyField("address", e.target.value)} />
+              </Field>
+              <Field label="Logo công ty (URL ảnh)" span={2}>
+                <input className="ta-input" placeholder="https://..." value={tour.company.logo || ""} onChange={(e) => setCompanyField("logo", e.target.value)} />
+              </Field>
+            </div>
+          </div>
+
+          {/* Thông tin người báo giá */}
+          <div style={{ paddingTop: 16, borderTop: `1px solid ${PALETTE.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: PALETTE.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Người báo giá</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Field label="Họ và tên">
+                <input className="ta-input" placeholder="Nguyễn Văn A" value={tour.agent?.name || ""} onChange={(e) => setAgentField("name", e.target.value)} />
+              </Field>
+              <Field label="Chức danh">
+                <input className="ta-input" placeholder="Sales Manager" value={tour.agent?.title || ""} onChange={(e) => setAgentField("title", e.target.value)} />
+              </Field>
+              <Field label="Số điện thoại / Hotline">
+                <input className="ta-input" placeholder="0901 234 567" value={tour.agent?.phone || ""} onChange={(e) => setAgentField("phone", e.target.value)} />
+              </Field>
+              <Field label="Email">
+                <input className="ta-input" placeholder="sales@company.vn" value={tour.agent?.email || ""} onChange={(e) => setAgentField("email", e.target.value)} />
+              </Field>
+              <Field label="Zalo" span={2}>
+                <input className="ta-input" placeholder="Số Zalo liên hệ" value={tour.agent?.zalo || ""} onChange={(e) => setAgentField("zalo", e.target.value)} />
+              </Field>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -865,30 +914,19 @@ function PricingSettingsCard({ tour, setField, pricing }) {
             <input type="range" min={0} max={100} value={tour.profitPercent} onChange={(e) => setField("profitPercent", parseInt(e.target.value))} style={{ width: "100%" }} />
           </Field>
         ) : (
-          <Field label="Lợi nhuận / khách (VNĐ)">
+          <Field label="Lợi nhuận / khách ($)">
             <CurrencyInput value={tour.profitFixed} onChange={(v) => setField("profitFixed", v)} />
           </Field>
         )}
-        <Field label="Làm tròn giá bán đến (VNĐ)">
+        <Field label="Làm tròn giá bán đến ($)">
           <select className="ta-select" value={tour.roundTo} onChange={(e) => setField("roundTo", parseInt(e.target.value))}>
             <option value={0}>Không làm tròn</option>
-            <option value={1000}>1.000</option>
-            <option value={10000}>10.000</option>
-            <option value={50000}>50.000</option>
-            <option value={100000}>100.000</option>
+            <option value={1}>1</option>
+            <option value={5}>5</option>
+            <option value={10}>10</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
           </select>
-        </Field>
-      </div>
-
-      <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${PALETTE.border}`, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Tiền tệ mặc định khi xem báo giá">
-          <select className="ta-select" value={tour.displayCurrency} onChange={(e) => setField("displayCurrency", e.target.value)}>
-            <option value="VND">VND (₫)</option>
-            <option value="USD">USD ($)</option>
-          </select>
-        </Field>
-        <Field label="Tỷ giá quy đổi (1 USD = ? VNĐ)">
-          <CurrencyInput value={tour.exchangeRate} onChange={(v) => setField("exchangeRate", v)} />
         </Field>
       </div>
     </div>
@@ -896,12 +934,13 @@ function PricingSettingsCard({ tour, setField, pricing }) {
 }
 
 function CurrencyInput({ value, onChange }) {
-  const [local, setLocal] = useState(value ? value.toLocaleString("vi-VN") : "");
-  useEffect(() => { setLocal(value ? Number(value).toLocaleString("vi-VN") : ""); }, [value]);
+  const [local, setLocal] = useState(value ? Number(value).toLocaleString("en-US") : "");
+  useEffect(() => { setLocal(value ? Number(value).toLocaleString("en-US") : ""); }, [value]);
   return (
-    <input className="ta-input" inputMode="numeric" placeholder="0" value={local}
-      onChange={(e) => { const n = parseNum(e.target.value); setLocal(n ? n.toLocaleString("vi-VN") : e.target.value); onChange(n); }}
-      onBlur={() => setLocal(value ? Number(value).toLocaleString("vi-VN") : "")} />
+    <input className="ta-input" inputMode="numeric" placeholder="0"
+      value={local}
+      onChange={(e) => { const n = parseNum(e.target.value); setLocal(n ? n.toLocaleString("en-US") : e.target.value); onChange(n); }}
+      onBlur={() => setLocal(value ? Number(value).toLocaleString("en-US") : "")} />
   );
 }
 
@@ -1083,25 +1122,27 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
 
   return (
     <div className="ta-card" style={{ overflow: "hidden" }}>
-      {/* Table header */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, padding: "10px 16px", background: PALETTE.gold, fontSize: 11, fontWeight: 700, color: "#3D3000" }}>
+      {/* Table header — thêm cột TỔNG CHI PHÍ TOUR */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 50px 110px 110px 26px", gap: 6, padding: "10px 16px", background: PALETTE.gold, fontSize: 10.5, fontWeight: 700, color: "#3D3000" }}>
         <div>KHOẢN MỤC</div>
         <div style={{ textAlign: "right" }}>ĐƠN GIÁ</div>
         <div style={{ textAlign: "right" }}>SL</div>
-        <div style={{ textAlign: "right" }}>Đêm/Lượt/Bữa</div>
+        <div style={{ textAlign: "right" }}>Đêm/Lượt</div>
         <div>ĐVT</div>
         <div style={{ textAlign: "right" }}>VAT%</div>
-        <div style={{ textAlign: "right" }}>THÀNH TIỀN</div>
+        <div style={{ textAlign: "right" }}>TỔNG CP TOUR</div>
+        <div style={{ textAlign: "right" }}>CP/KHÁCH</div>
         <div></div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
         {tour.costCategories.map((cat, catIdx) => {
           const total = categoryTotal(cat, pax);
+          const totalTourCat = cat.items.reduce((s, item) => s + itemAmounts(item, pax).totalTourAfterVat, 0);
           return (
             <div key={cat.id} style={{ borderBottom: `1px solid ${PALETTE.border}` }}>
               {/* Category header row */}
-              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, alignItems: "center", padding: "8px 16px", background: PALETTE.goldLight }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 50px 110px 110px 26px", gap: 6, alignItems: "center", padding: "8px 16px", background: PALETTE.goldLight }}>
                 <input
                   className="ta-input"
                   value={cat.name}
@@ -1110,7 +1151,8 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
                   placeholder="Tên danh mục"
                 />
                 <div></div><div></div><div></div><div></div><div></div>
-                <div style={{ textAlign: "right", fontWeight: 700, fontSize: 13, color: PALETTE.danger }}>{formatVND(total)}</div>
+                <div style={{ textAlign: "right", fontWeight: 700, fontSize: 12, color: PALETTE.danger }}>{formatVND(totalTourCat)}</div>
+                <div style={{ textAlign: "right", fontWeight: 700, fontSize: 12, color: PALETTE.primaryDark }}>{formatVND(total)}</div>
                 <button onClick={() => removeCategory(cat.id)} aria-label="Xoá danh mục" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
                   <Trash2 size={14} />
                 </button>
@@ -1120,14 +1162,15 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
               {cat.items.map((item) => {
                 const amounts = itemAmounts(item, pax);
                 return (
-                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 60px 110px 26px", gap: 6, alignItems: "center", padding: "6px 16px", borderTop: `1px solid ${PALETTE.border}` }}>
-                    <input className="ta-input" placeholder="Tên khoản mục" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 13 }} />
-                    <input className="ta-input" inputMode="numeric" placeholder="0" value={item.unitCost ? Number(item.unitCost).toLocaleString("vi-VN") : ""} onChange={(e) => updateItem(cat.id, item.id, { unitCost: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
-                    <input className="ta-input" type="number" min={0} value={item.qty} onChange={(e) => updateItem(cat.id, item.id, { qty: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
-                    <input className="ta-input" type="number" min={0} value={item.sessions ?? 1} onChange={(e) => updateItem(cat.id, item.id, { sessions: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
-                    <input className="ta-input" list="unit-options" value={item.unit} onChange={(e) => updateItem(cat.id, item.id, { unit: e.target.value })} style={{ padding: "6px 9px", fontSize: 13 }} />
-                    <input className="ta-input" type="number" min={0} max={100} value={item.vatPercent} onChange={(e) => updateItem(cat.id, item.id, { vatPercent: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 13, textAlign: "right" }} />
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 600, color: PALETTE.danger }}>{formatVND(amounts.afterVat)}</div>
+                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 50px 110px 110px 26px", gap: 6, alignItems: "center", padding: "6px 16px", borderTop: `1px solid ${PALETTE.border}` }}>
+                    <input className="ta-input" placeholder="Tên khoản mục" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
+                    <input className="ta-input" inputMode="numeric" placeholder="0" value={item.unitCost ? Number(item.unitCost).toLocaleString("en-US") : ""} onChange={(e) => updateItem(cat.id, item.id, { unitCost: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                    <input className="ta-input" type="number" min={0} value={item.qty} onChange={(e) => updateItem(cat.id, item.id, { qty: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                    <input className="ta-input" type="number" min={0} value={item.sessions ?? 1} onChange={(e) => updateItem(cat.id, item.id, { sessions: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                    <input className="ta-input" list="unit-options" value={item.unit} onChange={(e) => updateItem(cat.id, item.id, { unit: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
+                    <input className="ta-input" type="number" min={0} max={100} value={item.vatPercent} onChange={(e) => updateItem(cat.id, item.id, { vatPercent: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                    <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.danger }}>{formatVND(amounts.totalTourAfterVat)}</div>
+                    <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.primaryDark }}>{formatVND(amounts.afterVat)}</div>
                     <button onClick={() => removeItem(cat.id, item.id)} aria-label="Xoá dòng" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
                       <X size={14} />
                     </button>
@@ -1174,7 +1217,7 @@ function SummaryPanel({ pricing, tour, onPreview }) {
   return (
     <div className="ta-card" style={{ padding: 20 }}>
       <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
-        <Wallet size={17} /> CHI PHÍ TRÊN MỘT KHÁCH
+        <Wallet size={17} /> Tổng kết tài chính
       </h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
@@ -1493,12 +1536,50 @@ function ClientItineraryDoc({ tour, pricing, currency = "VND", exchangeRate = 25
         <div style={{ marginTop: 20, fontSize: 11, color: PALETTE.textFaint, lineHeight: 1.6 }}>
           Báo giá có giá trị tham khảo, có thể thay đổi tuỳ thời điểm và số lượng khách thực tế. Vui lòng liên hệ để được tư vấn và xác nhận chi tiết.
         </div>
+
+        <AgentBlock tour={tour} />
       </div>
     </DocShell>
   );
 }
 
 
+
+/* ---------- Thông tin người báo giá — dùng chung trong cả 2 bản in ---------- */
+function AgentBlock({ tour }) {
+  const agent = tour.agent || {};
+  const company = tour.company || {};
+  const hasAgent = agent.name || agent.phone || agent.email;
+  if (!hasAgent && !company.name) return null;
+
+  return (
+    <div style={{ marginTop: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {/* Thông tin công ty */}
+      <div style={{ padding: "14px 16px", background: PALETTE.primaryLight, borderRadius: 10 }}>
+        {company.logo && (
+          <img src={company.logo} alt="logo" style={{ height: 36, objectFit: "contain", marginBottom: 8, display: "block" }} onError={(e) => { e.target.style.display = "none"; }} />
+        )}
+        <div style={{ fontSize: 13, fontWeight: 700, color: PALETTE.primaryDark }}>{company.name}</div>
+        {company.address && <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 3 }}>📍 {company.address}</div>}
+        {company.phone && <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 2 }}>📞 {company.phone}</div>}
+        {company.email && <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 2 }}>✉ {company.email}</div>}
+        {company.website && <div style={{ fontSize: 11.5, color: PALETTE.primary, marginTop: 2 }}>🌐 {company.website}</div>}
+      </div>
+
+      {/* Thông tin người báo giá */}
+      {hasAgent && (
+        <div style={{ padding: "14px 16px", background: PALETTE.accentLight, borderRadius: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: PALETTE.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Người báo giá</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: PALETTE.ink }}>{agent.name}</div>
+          {agent.title && <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 2 }}>{agent.title}</div>}
+          {agent.phone && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 4 }}>📞 {agent.phone}</div>}
+          {agent.zalo && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 2 }}>💬 Zalo: {agent.zalo}</div>}
+          {agent.email && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 2 }}>✉ {agent.email}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ---------- Internal cost breakdown — TourAI style table ---------- */
 
@@ -1517,40 +1598,43 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
       </div>
 
       <div style={{ border: `1px solid ${PALETTE.border}`, borderRadius: 10, overflow: "hidden" }}>
-        {/* Header — đúng format ảnh mẫu: STT | Khoản mục | SL | Đêm/Lượt/Bữa | Đơn giá | Thành tiền | Ghi chú */}
-        <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: PALETTE.gold, fontSize: 10.5, fontWeight: 700, color: "#3D3000" }}>
+        {/* Header: STT | Khoản mục | SL | Đêm/Lượt/Bữa | Đơn giá | Tổng CP Tour | Chi phí/khách | Ghi chú */}
+        <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 38px 70px 80px 95px 90px 55px", background: PALETTE.gold, fontSize: 10, fontWeight: 700, color: "#3D3000" }}>
           <div style={cellHead}>STT</div>
           <div style={cellHead}>KHOẢN MỤC</div>
           <div style={{ ...cellHead, textAlign: "right" }}>SL</div>
           <div style={{ ...cellHead, textAlign: "center" }}>Đêm/Lượt/Bữa</div>
           <div style={{ ...cellHead, textAlign: "right" }}>Đơn giá</div>
-          <div style={{ ...cellHead, textAlign: "right" }}>Thành tiền</div>
-          <div style={cellHead}>Ghi chú</div>
+          <div style={{ ...cellHead, textAlign: "right" }}>TỔNG CP TOUR</div>
+          <div style={{ ...cellHead, textAlign: "right" }}>CP/KHÁCH</div>
+          <div style={cellHead}>ĐVT</div>
         </div>
 
         {tour.costCategories.map((cat, catIdx) => {
           const total = categoryTotal(cat, pricing.pax);
+          const totalTourCat = cat.items.reduce((s, item) => s + itemAmounts(item, pricing.pax).totalTourAfterVat, 0);
           return (
             <React.Fragment key={cat.id}>
-              {/* Category row — nền xanh nhạt như ảnh mẫu */}
-              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: "#DAEAF7", fontSize: 11.5, fontWeight: 700, borderTop: `1px solid ${PALETTE.border}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 38px 70px 80px 95px 90px 55px", background: "#DAEAF7", fontSize: 11.5, fontWeight: 700, borderTop: `1px solid ${PALETTE.border}` }}>
                 <div style={cell}>{String.fromCharCode(64 + catIdx + 1)}</div>
                 <div style={cell}>{cat.name}</div>
                 <div style={cell}></div><div style={cell}></div><div style={cell}></div>
-                <div style={{ ...cell, textAlign: "right", color: PALETTE.danger }}>{money(total)}</div>
+                <div style={{ ...cell, textAlign: "right", color: PALETTE.danger }}>{money(totalTourCat)}</div>
+                <div style={{ ...cell, textAlign: "right", color: PALETTE.primaryDark }}>{money(total)}</div>
                 <div style={cell}></div>
               </div>
               {cat.items.map((item, itemIdx) => {
                 const a = itemAmounts(item, pricing.pax);
                 return (
-                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", fontSize: 11.5, borderTop: `1px solid ${PALETTE.border}` }}>
+                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "28px 1fr 38px 70px 80px 95px 90px 55px", fontSize: 11, borderTop: `1px solid ${PALETTE.border}` }}>
                     <div style={{ ...cell, color: PALETTE.textFaint }}>{itemIdx + 1}</div>
                     <div style={cell}>{item.name || "—"}</div>
                     <div style={{ ...cell, textAlign: "right" }}>{item.qty}</div>
                     <div style={{ ...cell, textAlign: "right" }}>{item.sessions ?? 1}</div>
                     <div style={{ ...cell, textAlign: "right", color: PALETTE.textMuted }}>{item.unitCost ? money(item.unitCost) : "-"}</div>
-                    <div style={{ ...cell, textAlign: "right", fontWeight: 600, color: PALETTE.danger }}>{money(a.afterVat)}</div>
-                    <div style={{ ...cell, fontSize: 10.5, color: PALETTE.textFaint }}>{item.unit}</div>
+                    <div style={{ ...cell, textAlign: "right", fontWeight: 600, color: PALETTE.danger }}>{money(a.totalTourAfterVat)}</div>
+                    <div style={{ ...cell, textAlign: "right", fontWeight: 600, color: PALETTE.primaryDark }}>{money(a.afterVat)}</div>
+                    <div style={{ ...cell, fontSize: 10, color: PALETTE.textFaint }}>{item.unit}</div>
                   </div>
                 );
               })}
@@ -1558,12 +1642,13 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
           );
         })}
 
-        {/* Dòng TỔNG cuối bảng — giống ảnh mẫu chữ H TỔNG */}
-        <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 44px 80px 90px 100px 70px", background: "#FFF3CD", fontWeight: 700, fontSize: 12, borderTop: `2px solid ${PALETTE.borderStrong}` }}>
+        {/* Dòng TỔNG */}
+        <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 38px 70px 80px 95px 90px 55px", background: "#FFF3CD", fontWeight: 700, fontSize: 11.5, borderTop: `2px solid ${PALETTE.borderStrong}` }}>
           <div style={cell}>H</div>
           <div style={{ ...cell, color: PALETTE.danger }}>TỔNG</div>
           <div style={cell}></div><div style={cell}></div><div style={cell}></div>
-          <div style={{ ...cell, textAlign: "right", color: PALETTE.danger, fontSize: 13 }}>{money(pricing.costTotalAll)}</div>
+          <div style={{ ...cell, textAlign: "right", color: PALETTE.danger }}>{money(pricing.costTotalAll)}</div>
+          <div style={{ ...cell, textAlign: "right", color: PALETTE.primaryDark }}>{money(pricing.costPerPax)}</div>
           <div style={cell}></div>
         </div>
       </div>
@@ -1584,6 +1669,8 @@ function CostBreakdownDoc({ tour, pricing, currency = "VND", exchangeRate = 2540
           <div style={{ fontSize: 12.5, color: PALETTE.ink, whiteSpace: "pre-line", lineHeight: 1.6 }}>{tour.notes}</div>
         </div>
       )}
+
+      <AgentBlock tour={tour} />
 
       <div style={{ marginTop: 16, fontSize: 10.5, color: PALETTE.textFaint }}>NỘI BỘ — KHÔNG GỬI KHÁCH</div>
     </DocShell>
