@@ -358,59 +358,20 @@ function Field({ label, children, span }) {
    ============================================================ */
 
 export default function App() {
+  // ── Tất cả hooks PHẢI khai báo trước bất kỳ conditional return nào ──
   const [tours, setTours] = useState(null);
   const [activeTourId, setActiveTourId] = useState(null);
   const [view, setView] = useState("list");
   const [toast, setToast] = useState(null);
-  const [publicTour, setPublicTour] = useState(null); // tour xem qua link public
+  const [publicTour, setPublicTour] = useState(null);
+  const [isPublicMode, setIsPublicMode] = useState(false);
   const saveTimer = useRef(null);
-
-  useEffect(() => {
-    // Kiểm tra xem có phải link xem public không
-    const encoded = getPublicTourDataFromUrl();
-    if (encoded) {
-      loadPublicTour(encoded).then((t) => {
-        if (t) setPublicTour(t);
-        else setPublicTour("not_found");
-      });
-      return;
-    }
-    loadTours().then((t) => setTours(t));
-  }, []);
-
-  // --- Nếu đang xem link public ---
-  if (publicTour) {
-    if (publicTour === "not_found") {
-      return (
-        <div style={styles.loadingScreen}>
-          <GlobalStyle />
-          <Compass size={36} color={PALETTE.textFaint} />
-          <p style={{ color: PALETTE.textMuted, fontSize: 14, marginTop: 12 }}>
-            Không tìm thấy báo giá hoặc link đã hết hạn.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div style={styles.appShell}>
-        <GlobalStyle />
-        <PublicTourErrorBoundary>
-          <PublicTourView tour={publicTour} />
-        </PublicTourErrorBoundary>
-      </div>
-    );
-  }
 
   const persist = useCallback((next) => {
     setTours(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => saveTours(next), 400);
   }, []);
-
-  const showToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2200);
-  };
 
   const activeTour = useMemo(
     () => (tours || []).find((t) => t.id === activeTourId) || null,
@@ -429,6 +390,25 @@ export default function App() {
     },
     [tours, activeTourId, persist]
   );
+
+  useEffect(() => {
+    const encoded = getPublicTourDataFromUrl();
+    if (encoded) {
+      setIsPublicMode(true);
+      loadPublicTour(encoded).then((t) => {
+        setPublicTour(t || "not_found");
+      });
+    } else {
+      loadTours().then((t) => setTours(t));
+    }
+  }, []);
+
+  // ── Sau khi tất cả hooks đã khai báo, mới được conditional return ──
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2200);
+  };
 
   const createTour = () => {
     const t = newTour();
@@ -450,9 +430,43 @@ export default function App() {
     showToast("Đã xoá tour");
   };
 
+  // Chế độ xem link public
+  if (isPublicMode) {
+    if (!publicTour) {
+      return (
+        <div style={styles.loadingScreen}>
+          <GlobalStyle />
+          <div style={styles.loadingSpinner} />
+          <p style={{ color: PALETTE.textMuted, fontSize: 14 }}>Đang tải báo giá...</p>
+        </div>
+      );
+    }
+    if (publicTour === "not_found") {
+      return (
+        <div style={styles.loadingScreen}>
+          <GlobalStyle />
+          <Compass size={36} color={PALETTE.textFaint} />
+          <p style={{ color: PALETTE.textMuted, fontSize: 14, marginTop: 12 }}>
+            Không tìm thấy báo giá hoặc link đã hết hạn.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div style={styles.appShell}>
+        <GlobalStyle />
+        <PublicTourErrorBoundary>
+          <PublicTourView tour={publicTour} />
+        </PublicTourErrorBoundary>
+      </div>
+    );
+  }
+
+  // Chế độ app bình thường
   if (tours === null) {
     return (
       <div style={styles.loadingScreen}>
+        <GlobalStyle />
         <div style={styles.loadingSpinner} />
         <p style={{ color: PALETTE.textMuted, fontSize: 14 }}>Đang tải dữ liệu...</p>
       </div>
