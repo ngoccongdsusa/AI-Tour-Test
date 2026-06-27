@@ -1784,72 +1784,109 @@ class PublicTourErrorBoundary extends React.Component {
    ============================================================ */
 
 function PublicTourView({ tour }) {
-  const pricing = tourPricing(tour);
+  // Bảo vệ mọi field có thể thiếu (tour từ phiên bản cũ)
+  const safeTour = {
+    name: "",
+    destination: "",
+    startDate: "",
+    durationDays: 1,
+    pax: 1,
+    coverImageUrl: "",
+    highlights: "",
+    includes: [],
+    excludes: [],
+    itinerary: [],
+    costCategories: [],
+    profitMode: "percent",
+    profitPercent: 0,
+    profitFixed: 0,
+    roundTo: 0,
+    company: {},
+    agent: {},
+    ...tour,
+    company: { name: "", phone: "", email: "", address: "", website: "", logo: "", ...(tour?.company || {}) },
+    agent: { name: "", title: "", phone: "", email: "", zalo: "", ...(tour?.agent || {}) },
+    itinerary: (tour?.itinerary || []).map(day => ({
+      id: "", dayNumber: 1, title: "", content: "", summary: "", meals: [], stops: [],
+      ...day,
+      stops: (day?.stops || []),
+    })),
+    costCategories: (tour?.costCategories || []).map(cat => ({
+      id: "", name: "", items: [], ...cat,
+      items: (cat?.items || []),
+    })),
+  };
+
+  // Tính giá an toàn — wrap trong try/catch
+  let pricing = { sellPerPaxRounded: 0, sellTotal: 0, pax: safeTour.pax };
+  try { pricing = tourPricing(safeTour); } catch (_) {}
+
   const money = (n) => formatMoney(n);
-  const itinerary = tour.itinerary || [];
 
   return (
-    <div style={{ minHeight:"100vh", background:PALETTE.bg, fontFamily:"'Montserrat',sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Montserrat',sans-serif" }}>
       {/* Topbar */}
-      <div style={{ background:PALETTE.primary, padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ color:"white", fontWeight:700, fontSize:15 }}>{tour.company?.name || "Báo giá tour"}</div>
-        <div style={{ display:"flex", gap:6 }}>
-          <button className="ta-btn ta-btn-primary" onClick={()=>window.print()} style={{ padding:"6px 14px", fontSize:12 }}>
-            <Printer size={13}/> In / PDF
-          </button>
+      <div style={{ background: PALETTE.primary, padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ color: "white", fontWeight: 700, fontSize: 15 }}>
+          {safeTour.company.name || "Báo giá tour"}
         </div>
+        <button className="ta-btn ta-btn-primary" onClick={() => window.print()} style={{ padding: "6px 14px", fontSize: 12 }}>
+          <Printer size={13} /> In / PDF
+        </button>
       </div>
 
-      <div style={{ maxWidth:860, margin:"0 auto", padding:"32px 24px 80px" }}>
-        {/* Cover */}
-        {tour.coverImageUrl && (
-          <div style={{ height:240, borderRadius:16, overflow:"hidden", marginBottom:24, background:`url(${tour.coverImageUrl}) center/cover` }}/>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px 80px" }}>
+        {/* Cover image */}
+        {safeTour.coverImageUrl && (
+          <div style={{ height: 240, borderRadius: 16, overflow: "hidden", marginBottom: 24, background: `url(${safeTour.coverImageUrl}) center/cover` }} />
         )}
 
-        {/* Header */}
-        <h1 style={{ fontSize:28, fontWeight:800, margin:"0 0 8px", color:PALETTE.ink }}>{tour.name || "Chương trình tour"}</h1>
-        <div style={{ display:"flex", gap:16, fontSize:13, color:PALETTE.textMuted, marginBottom:24, flexWrap:"wrap" }}>
-          <span style={{ display:"flex", alignItems:"center", gap:5 }}><MapPin size={14}/> {tour.destination||"—"}</span>
-          <span style={{ display:"flex", alignItems:"center", gap:5 }}><Calendar size={14}/> {tour.durationDays} ngày {tour.durationDays>1?`${tour.durationDays-1} đêm`:""}</span>
-          {tour.startDate && <span style={{ display:"flex", alignItems:"center", gap:5 }}><Calendar size={14}/> Khởi hành: {tour.startDate}</span>}
+        {/* Tiêu đề */}
+        <h1 style={{ fontSize: 28, fontWeight: 800, margin: "0 0 8px", color: PALETTE.ink }}>
+          {safeTour.name || "Chương trình tour"}
+        </h1>
+        <div style={{ display: "flex", gap: 16, fontSize: 13, color: PALETTE.textMuted, marginBottom: 24, flexWrap: "wrap" }}>
+          {safeTour.destination && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapPin size={14} /> {safeTour.destination}</span>}
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Calendar size={14} /> {safeTour.durationDays} ngày {safeTour.durationDays > 1 ? `${safeTour.durationDays - 1} đêm` : ""}</span>
+          {safeTour.startDate && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Calendar size={14} /> Khởi hành: {safeTour.startDate}</span>}
         </div>
 
         {/* Giá nổi bật */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"18px 24px", background:PALETTE.primary, borderRadius:14, marginBottom:24, flexWrap:"wrap", gap:12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", background: PALETTE.primary, borderRadius: 14, marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)", textTransform:"uppercase", letterSpacing:"0.08em" }}>Giá tour trọn gói / khách</div>
-            <div style={{ fontSize:30, fontWeight:800, color:"white" }}>{money(pricing.sellPerPaxRounded)}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Giá tour / khách</div>
+            <div style={{ fontSize: 30, fontWeight: 800, color: "white" }}>{money(pricing.sellPerPaxRounded)}</div>
           </div>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)" }}>Tổng đoàn ({pricing.pax} khách)</div>
-            <div style={{ fontSize:18, fontWeight:700, color:"rgba(255,255,255,0.9)" }}>{money(pricing.sellTotal)}</div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>Tổng đoàn ({pricing.pax} khách)</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>{money(pricing.sellTotal)}</div>
           </div>
         </div>
 
         {/* Điểm nổi bật */}
-        {tour.highlights && (
-          <div style={{ marginBottom:24, padding:"16px 20px", background:PALETTE.primaryLight, borderRadius:12, borderLeft:`4px solid ${PALETTE.primary}` }}>
-            <div style={{ fontSize:11.5, fontWeight:800, letterSpacing:"0.06em", color:PALETTE.primaryDark, marginBottom:8, textTransform:"uppercase" }}>✦ Điểm nổi bật</div>
-            <div style={{ fontSize:13.5, lineHeight:1.8, color:PALETTE.ink }} dangerouslySetInnerHTML={{ __html: tour.highlights }}/>
+        {safeTour.highlights ? (
+          <div style={{ marginBottom: 24, padding: "16px 20px", background: PALETTE.primaryLight, borderRadius: 12, borderLeft: `4px solid ${PALETTE.primary}` }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.06em", color: PALETTE.primaryDark, marginBottom: 8, textTransform: "uppercase" }}>✦ Điểm nổi bật</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.8, color: PALETTE.ink }} dangerouslySetInnerHTML={{ __html: safeTour.highlights }} />
           </div>
-        )}
+        ) : null}
 
-        {/* Includes / Excludes */}
-        {((tour.includes||[]).length > 0 || (tour.excludes||[]).length > 0) && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:24 }}>
-            {(tour.includes||[]).length > 0 && (
-              <div style={{ padding:"16px 18px", background:"#F0FAF6", borderRadius:12, border:`1px solid ${PALETTE.primaryLight}` }}>
-                <div style={{ fontSize:11.5, fontWeight:800, color:PALETTE.primary, marginBottom:10, textTransform:"uppercase" }}>✓ Tour bao gồm</div>
-                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:13, lineHeight:2, color:PALETTE.ink }}>
-                  {(tour.includes||[]).filter(Boolean).map((item,i)=><li key={i}>{item}</li>)}
+        {/* Tour bao gồm / không bao gồm */}
+        {(safeTour.includes.length > 0 || safeTour.excludes.length > 0) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+            {safeTour.includes.filter(Boolean).length > 0 && (
+              <div style={{ padding: "16px 18px", background: "#F0FAF6", borderRadius: 12, border: `1px solid ${PALETTE.primaryLight}` }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: PALETTE.primary, marginBottom: 10, textTransform: "uppercase" }}>✓ Tour bao gồm</div>
+                <ul style={{ margin: 0, padding: "0 0 0 16px", fontSize: 13, lineHeight: 2, color: PALETTE.ink }}>
+                  {safeTour.includes.filter(Boolean).map((item, i) => <li key={i}>{item}</li>)}
                 </ul>
               </div>
             )}
-            {(tour.excludes||[]).length > 0 && (
-              <div style={{ padding:"16px 18px", background:"#FDF4F3", borderRadius:12, border:`1px solid ${PALETTE.dangerLight}` }}>
-                <div style={{ fontSize:11.5, fontWeight:800, color:PALETTE.danger, marginBottom:10, textTransform:"uppercase" }}>✗ Không bao gồm</div>
-                <ul style={{ margin:0, padding:"0 0 0 16px", fontSize:13, lineHeight:2, color:PALETTE.ink }}>
-                  {(tour.excludes||[]).filter(Boolean).map((item,i)=><li key={i}>{item}</li>)}
+            {safeTour.excludes.filter(Boolean).length > 0 && (
+              <div style={{ padding: "16px 18px", background: "#FDF4F3", borderRadius: 12, border: `1px solid ${PALETTE.dangerLight}` }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: PALETTE.danger, marginBottom: 10, textTransform: "uppercase" }}>✗ Không bao gồm</div>
+                <ul style={{ margin: 0, padding: "0 0 0 16px", fontSize: 13, lineHeight: 2, color: PALETTE.ink }}>
+                  {safeTour.excludes.filter(Boolean).map((item, i) => <li key={i}>{item}</li>)}
                 </ul>
               </div>
             )}
@@ -1857,59 +1894,88 @@ function PublicTourView({ tour }) {
         )}
 
         {/* Lịch trình */}
-        <h2 style={{ fontSize:18, fontWeight:800, margin:"0 0 14px", color:PALETTE.ink }}>Lịch trình chi tiết</h2>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          {itinerary.map((day) => (
-            <div key={day.id} style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
-              <div style={{ display:"flex", alignItems:"stretch", background:PALETTE.primary }}>
-                <div style={{ minWidth:56, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"12px 0", background:PALETTE.primaryDark, color:"white" }}>
-                  <span style={{ fontSize:8, fontWeight:600, opacity:0.7, letterSpacing:"0.08em" }}>NGÀY</span>
-                  <span style={{ fontSize:22, fontWeight:800, lineHeight:1 }}>{day.dayNumber}</span>
-                </div>
-                <div style={{ flex:1, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                  <div style={{ fontSize:14, fontWeight:700, color:"white" }}>{day.title||`Ngày ${day.dayNumber}`}</div>
-                  {day.meals && day.meals.length > 0 && (
-                    <div style={{ display:"flex", gap:4, flexShrink:0 }}>
-                      {day.meals.map((meal)=>(
-                        <span key={meal} style={{ padding:"2px 9px", borderRadius:20, fontSize:10.5, fontWeight:600, background:"rgba(255,255,255,0.2)", color:"white" }}>
-                          Ăn {meal.toLowerCase()}
-                        </span>
-                      ))}
+        {safeTour.itinerary.length > 0 && (
+          <>
+            <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 14px", color: PALETTE.ink }}>Lịch trình chi tiết</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {safeTour.itinerary.map((day, idx) => (
+                <div key={day.id || idx} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
+                  {/* Header ngày */}
+                  <div style={{ display: "flex", alignItems: "stretch", background: PALETTE.primary }}>
+                    <div style={{ minWidth: 56, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0", background: PALETTE.primaryDark, color: "white" }}>
+                      <span style={{ fontSize: 8, fontWeight: 600, opacity: 0.7, letterSpacing: "0.08em" }}>NGÀY</span>
+                      <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{day.dayNumber || idx + 1}</span>
                     </div>
-                  )}
-                </div>
-              </div>
-              <div style={{ padding:"16px 20px" }}>
-                {(day.content||day.summary) ? (
-                  <div style={{ fontSize:13.5, lineHeight:1.8 }} dangerouslySetInnerHTML={{ __html: day.content||`<p>${day.summary}</p>` }}/>
-                ) : (
-                  <div style={{ fontSize:12.5, color:PALETTE.textFaint, fontStyle:"italic" }}>Chưa có nội dung</div>
-                )}
-                {day.stops.length > 0 && (
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:8, marginTop:14 }}>
-                    {day.stops.map((stop)=>(
-                      <div key={stop.id} style={{ borderRadius:8, overflow:"hidden", border:`1px solid ${PALETTE.border}` }}>
-                        <div style={{ height:80, background:stop.imageUrl?`url(${stop.imageUrl}) center/cover`:PALETTE.surfaceAlt }}/>
-                        {stop.name && <div style={{ padding:"6px 8px", fontSize:11.5, fontWeight:600 }}>{stop.name}</div>}
-                      </div>
-                    ))}
+                    <div style={{ flex: 1, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>{day.title || `Ngày ${day.dayNumber || idx + 1}`}</div>
+                      {day.meals && day.meals.length > 0 && (
+                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                          {day.meals.map((meal) => (
+                            <span key={meal} style={{ padding: "2px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 600, background: "rgba(255,255,255,0.2)", color: "white" }}>
+                              Ăn {meal.toLowerCase()}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  {/* Nội dung ngày */}
+                  <div style={{ padding: "16px 20px" }}>
+                    {(day.content || day.summary) ? (
+                      <div style={{ fontSize: 13.5, lineHeight: 1.8 }} dangerouslySetInnerHTML={{ __html: day.content || `<p>${day.summary}</p>` }} />
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có nội dung</div>
+                    )}
+
+                    {/* Ảnh điểm tham quan */}
+                    {day.stops.length > 0 && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 8, marginTop: 14 }}>
+                        {day.stops.map((stop, si) => (
+                          <div key={stop.id || si} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
+                            {stop.imageUrl
+                              ? <div style={{ height: 80, background: `url(${stop.imageUrl}) center/cover` }} />
+                              : <div style={{ height: 80, background: PALETTE.surfaceAlt }} />
+                            }
+                            {stop.name && <div style={{ padding: "6px 8px", fontSize: 11.5, fontWeight: 600 }}>{stop.name}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </>
+        )}
+
+        {/* Thông tin công ty & người báo giá */}
+        <div style={{ marginTop: 32, display: "grid", gridTemplateColumns: safeTour.agent.name ? "1fr 1fr" : "1fr", gap: 12 }}>
+          <div style={{ padding: "16px 18px", background: PALETTE.primaryLight, borderRadius: 12 }}>
+            {safeTour.company.logo && (
+              <img src={safeTour.company.logo} alt="logo" style={{ height: 32, objectFit: "contain", marginBottom: 8, display: "block" }}
+                onError={(e) => { e.target.style.display = "none"; }} />
+            )}
+            <div style={{ fontWeight: 700, fontSize: 14, color: PALETTE.primaryDark }}>{safeTour.company.name}</div>
+            {safeTour.company.address && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 3 }}>📍 {safeTour.company.address}</div>}
+            {safeTour.company.phone && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>📞 {safeTour.company.phone}</div>}
+            {safeTour.company.email && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>✉ {safeTour.company.email}</div>}
+            {safeTour.company.website && <div style={{ fontSize: 12, color: PALETTE.primary, marginTop: 2 }}>🌐 {safeTour.company.website}</div>}
+          </div>
+          {safeTour.agent.name && (
+            <div style={{ padding: "16px 18px", background: PALETTE.accentLight, borderRadius: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: PALETTE.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Người báo giá</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: PALETTE.ink }}>{safeTour.agent.name}</div>
+              {safeTour.agent.title && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>{safeTour.agent.title}</div>}
+              {safeTour.agent.phone && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 4 }}>📞 {safeTour.agent.phone}</div>}
+              {safeTour.agent.zalo && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 2 }}>💬 Zalo: {safeTour.agent.zalo}</div>}
+              {safeTour.agent.email && <div style={{ fontSize: 12, color: PALETTE.ink, marginTop: 2 }}>✉ {safeTour.agent.email}</div>}
+            </div>
+          )}
         </div>
 
-        {/* Footer liên hệ */}
-        <div style={{ marginTop:32, padding:"20px 24px", background:PALETTE.surfaceAlt, borderRadius:12, textAlign:"center" }}>
-          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>{tour.company?.name}</div>
-          <div style={{ fontSize:13, color:PALETTE.textMuted }}>
-            {tour.company?.phone}{tour.company?.email ? ` · ${tour.company.email}` : ""}
-            {tour.company?.address ? ` · ${tour.company.address}` : ""}
-          </div>
-          <div style={{ fontSize:11, color:PALETTE.textFaint, marginTop:8 }}>
-            Báo giá có giá trị tham khảo. Liên hệ để được xác nhận và đặt tour.
-          </div>
+        <div style={{ marginTop: 16, fontSize: 11, color: PALETTE.textFaint, textAlign: "center" }}>
+          Báo giá có giá trị tham khảo. Vui lòng liên hệ để xác nhận và đặt tour.
         </div>
       </div>
     </div>
