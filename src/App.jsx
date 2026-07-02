@@ -73,8 +73,7 @@ const newTour = () => ({
   profitPercent: 10,
   profitFixed: 0,
   roundTo: 10000, // làm tròn giá bán đến bội số này (VNĐ)
-  displayCurrency: "USD",
-  exchangeRate: 1,
+  surcharges: [], // [{ id, name, amount, perPax: true }] — phụ thu tự chọn
   notes: "",
   company: {
     name: "Công ty Du lịch Việt Hành",
@@ -146,7 +145,7 @@ function tourCostTotal(tour) {
 
 function tourPricing(tour) {
   const pax = Math.max(1, Number(tour.pax) || 1);
-  const costPerPax = tourCostTotal(tour); // already per-pax basis since splitByPax divides totals; non-split items are per-pax line entries too
+  const costPerPax = tourCostTotal(tour);
   const costTotalAll = costPerPax * pax;
 
   let profitPerPax = 0;
@@ -156,20 +155,26 @@ function tourPricing(tour) {
     profitPerPax = Number(tour.profitFixed) || 0;
   }
 
-  const sellPerPaxRaw = costPerPax + profitPerPax;
+  // Phụ thu tự chọn
+  const surcharges = tour.surcharges || [];
+  const surchargePerPax = surcharges.reduce((sum, s) => {
+    const amt = Number(s.amount) || 0;
+    return sum + (s.perPax ? amt : amt / pax);
+  }, 0);
+  const surchargeTotalAll = surcharges.reduce((sum, s) => {
+    const amt = Number(s.amount) || 0;
+    return sum + (s.perPax ? amt * pax : amt);
+  }, 0);
+
+  const sellPerPaxRaw = costPerPax + profitPerPax + surchargePerPax;
   const sellPerPaxRounded = roundTo(sellPerPaxRaw, Number(tour.roundTo) || 0);
   const sellTotal = sellPerPaxRounded * pax;
   const profitTotal = sellTotal - costTotalAll;
 
   return {
-    pax,
-    costPerPax,
-    costTotalAll,
-    profitPerPax,
-    sellPerPaxRaw,
-    sellPerPaxRounded,
-    sellTotal,
-    profitTotal,
+    pax, costPerPax, costTotalAll,
+    profitPerPax, surchargePerPax, surchargeTotalAll,
+    sellPerPaxRaw, sellPerPaxRounded, sellTotal, profitTotal,
   };
 }
 
@@ -702,7 +707,7 @@ function TourEditor({ tour, onChange, onBack, onPreview, showToast }) {
         </div>
 
         <div style={{ position: "sticky", top: 88, alignSelf: "start" }}>
-          <SummaryPanel pricing={pricing} tour={tour} onPreview={onPreview} />
+          <SummaryPanel pricing={pricing} tour={tour} onChange={onChange} onPreview={onPreview} />
         </div>
       </div>
     </div>
@@ -1071,33 +1076,34 @@ function DayCard({ day, onUpdate, onAddStop, onUpdateStop, onRemoveStop }) {
 
       {!collapsed && (
         <div>
-          {/* Rich text editor dùng chung RichTextCard — nhưng inline không có card wrapper */}
-          <InlineRichText value={day.content||""} onChange={(v)=>onUpdate({content:v})}
-            placeholder="Nhập nội dung lịch trình ngày này... (hỗ trợ in đậm, bullet list, tiêu đề)" />
-
-          {/* Ảnh điểm tham quan */}
-          <div style={{ padding:"0 16px 16px" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8, paddingTop:12, borderTop:`1px solid ${PALETTE.border}` }}>
-              <span style={{ fontSize:12, fontWeight:600, color:PALETTE.textMuted, display:"flex", alignItems:"center", gap:5 }}>
-                <Camera size={13}/> Ảnh điểm tham quan
+          {/* Ảnh điểm tham quan — đặt TRÊN ĐẦU */}
+          <div style={{ padding: "14px 16px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: PALETTE.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
+                <Camera size={13} /> Ảnh điểm tham quan
               </span>
-              <button className="ta-btn ta-btn-ghost" style={{ padding:"3px 9px", fontSize:11 }} onClick={onAddStop}>
-                <Plus size={11}/> Thêm ảnh
+              <button className="ta-btn ta-btn-ghost" style={{ padding: "3px 9px", fontSize: 11 }} onClick={onAddStop}>
+                <Plus size={11} /> Thêm ảnh
               </button>
             </div>
-            {day.stops.length > 0 && (
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:8 }}>
+            {day.stops.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8, marginBottom: 12 }}>
                 {day.stops.map((stop) => (
                   <StopCard key={stop.id} stop={stop}
-                    onUpdate={(patch)=>onUpdateStop(stop.id,patch)}
-                    onRemove={()=>onRemoveStop(stop.id)} />
+                    onUpdate={(patch) => onUpdateStop(stop.id, patch)}
+                    onRemove={() => onRemoveStop(stop.id)} />
                 ))}
               </div>
-            )}
-            {day.stops.length === 0 && (
-              <div style={{ fontSize:11.5, color:PALETTE.textFaint }}>Thêm ảnh điểm tham quan để hiển thị trong bản gửi khách</div>
+            ) : (
+              <div style={{ fontSize: 11.5, color: PALETTE.textFaint, marginBottom: 10 }}>
+                Thêm ảnh điểm tham quan để hiển thị trong bản gửi khách
+              </div>
             )}
           </div>
+
+          {/* Rich text nội dung — đặt DƯỚI ảnh */}
+          <InlineRichText value={day.content || ""} onChange={(v) => onUpdate({ content: v })}
+            placeholder="Nhập nội dung lịch trình ngày này... (hỗ trợ in đậm, bullet list, tiêu đề)" />
         </div>
       )}
     </div>
@@ -1266,19 +1272,25 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
 
 /* ---------- Right sticky summary panel ---------- */
 
-function SummaryPanel({ pricing, tour, onPreview }) {
+function SummaryPanel({ pricing, tour, onChange, onPreview }) {
+  const setSurcharges = (surcharges) => onChange((t) => ({ ...t, surcharges }));
+  const addSurcharge = () => setSurcharges([...(tour.surcharges || []), { id: uid(), name: "", amount: 0, perPax: true }]);
+  const updateSurcharge = (id, patch) => setSurcharges((tour.surcharges || []).map((s) => s.id === id ? { ...s, ...patch } : s));
+  const removeSurcharge = (id) => setSurcharges((tour.surcharges || []).filter((s) => s.id !== id));
+
   return (
     <div className="ta-card" style={{ padding: 20 }}>
       <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
         <Wallet size={17} /> Tổng kết tài chính
       </h2>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+      {/* Chi phí theo danh mục */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
         {(tour.costCategories || []).map((cat) => {
           const total = categoryTotal(cat, pricing.pax);
           if (total === 0) return null;
           return (
-            <div key={cat.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <div key={cat.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
               <span style={{ color: PALETTE.textMuted }}>{cat.name || "—"}</span>
               <span style={{ fontWeight: 500 }}>{formatVND(total)}</span>
             </div>
@@ -1286,11 +1298,72 @@ function SummaryPanel({ pricing, tour, onPreview }) {
         })}
       </div>
 
-      <div style={{ borderTop: `1px solid ${PALETTE.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ borderTop: `1px solid ${PALETTE.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
         <Row label="Chi phí / khách" value={formatVND(pricing.costPerPax)} muted />
         <Row label="Tổng chi phí" value={formatVND(pricing.costTotalAll)} muted small />
       </div>
 
+      {/* Phụ thu tự chọn */}
+      <div style={{ marginTop: 14, padding: "12px 14px", background: PALETTE.surfaceAlt, borderRadius: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: PALETTE.ink }}>Phụ thu tự chọn</span>
+          <button className="ta-btn ta-btn-ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={addSurcharge}>
+            <Plus size={11} /> Thêm
+          </button>
+        </div>
+        {(tour.surcharges || []).length === 0 && (
+          <div style={{ fontSize: 11.5, color: PALETTE.textFaint, fontStyle: "italic" }}>
+            VD: phụ thu phòng đơn, phụ thu cao điểm...
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {(tour.surcharges || []).map((s) => (
+            <div key={s.id}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="ta-input"
+                  placeholder="Tên phụ thu"
+                  value={s.name}
+                  onChange={(e) => updateSurcharge(s.id, { name: e.target.value })}
+                  style={{ flex: 1, padding: "5px 8px", fontSize: 12 }}
+                />
+                <input
+                  className="ta-input"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={s.amount ? Number(s.amount).toLocaleString("en-US") : ""}
+                  onChange={(e) => updateSurcharge(s.id, { amount: parseNum(e.target.value) })}
+                  style={{ width: 88, padding: "5px 8px", fontSize: 12, textAlign: "right" }}
+                />
+                <button onClick={() => removeSurcharge(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint, flexShrink: 0 }}>
+                  <X size={14} />
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 4, paddingLeft: 2 }}>
+                {[{ v: true, l: "Theo đầu khách" }, { v: false, l: "Cố định cả đoàn" }].map(({ v, l }) => (
+                  <label key={l} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: PALETTE.textMuted, cursor: "pointer" }}>
+                    <input type="radio" name={`pt-${s.id}`} checked={s.perPax === v} onChange={() => updateSurcharge(s.id, { perPax: v })} />
+                    {l}
+                  </label>
+                ))}
+                {s.amount > 0 && (
+                  <span style={{ fontSize: 11, color: PALETTE.primaryDark, fontWeight: 600, marginLeft: "auto" }}>
+                    = {formatVND(s.perPax ? s.amount * pricing.pax : s.amount)} / đoàn
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {(tour.surcharges || []).some((s) => s.amount > 0) && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${PALETTE.border}`, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600 }}>
+            <span style={{ color: PALETTE.textMuted }}>Tổng phụ thu / khách</span>
+            <span style={{ color: PALETTE.accent }}>{formatVND(pricing.surchargePerPax)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Giá bán */}
       <div style={{ marginTop: 14, padding: "14px 16px", background: PALETTE.primaryLight, borderRadius: 10 }}>
         <Row label="Giá bán / khách" value={formatVND(pricing.sellPerPaxRounded)} big />
         <Row label="Tổng giá trị hợp đồng" value={formatVND(pricing.sellTotal)} small />
@@ -1553,21 +1626,12 @@ function ClientItineraryDoc({ tour, pricing, currency = "USD", exchangeRate = 1 
 
               {/* Nội dung HTML từ rich text */}
               <div style={{ padding: "14px 18px" }}>
-                {(day.content || day.summary) ? (
-                  <div
-                    style={{ fontSize: 13, lineHeight: 1.8, color: PALETTE.ink }}
-                    dangerouslySetInnerHTML={{ __html: day.content || `<p>${day.summary}</p>` }}
-                  />
-                ) : (
-                  <div style={{ fontSize: 12.5, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có nội dung lịch trình</div>
-                )}
-
-                {/* Lưới ảnh điểm tham quan */}
+                {/* Lưới ảnh điểm tham quan — TRÊN ĐẦU */}
                 {day.stops.length > 0 && (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 14 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
                     {day.stops.map((stop) => (
                       <div key={stop.id} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${PALETTE.border}` }}>
-                        <div style={{ height: 80, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ height: 90, background: stop.imageUrl ? `url(${stop.imageUrl}) center/cover` : PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
                           {!stop.imageUrl && <ImageIcon size={16} color={PALETTE.textFaint} />}
                         </div>
                         {stop.name && (
@@ -1576,6 +1640,16 @@ function ClientItineraryDoc({ tour, pricing, currency = "USD", exchangeRate = 1 
                       </div>
                     ))}
                   </div>
+                )}
+
+                {/* Nội dung lịch trình — DƯỚI ảnh */}
+                {(day.content || day.summary) ? (
+                  <div
+                    style={{ fontSize: 13, lineHeight: 1.8, color: PALETTE.ink }}
+                    dangerouslySetInnerHTML={{ __html: day.content || `<p>${day.summary}</p>` }}
+                  />
+                ) : (
+                  <div style={{ fontSize: 12.5, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có nội dung lịch trình</div>
                 )}
               </div>
             </div>
@@ -1715,6 +1789,9 @@ function CostBreakdownDoc({ tour, pricing, currency = "USD", exchangeRate = 1 })
       <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 0, border: `1px solid ${PALETTE.border}`, borderRadius: 10, overflow: "hidden" }}>
         <SummaryLine label="Chi phí / khách" value={money(pricing.costPerPax)} />
         <SummaryLine label="Lợi nhuận / khách" value={money(pricing.profitPerPax)} />
+        {pricing.surchargePerPax > 0 && (
+          <SummaryLine label={`Phụ thu / khách (${(tour.surcharges||[]).map(s=>s.name).filter(Boolean).join(", ")})`} value={money(pricing.surchargePerPax)} />
+        )}
         <SummaryLine label="Giá bán / khách (làm tròn)" value={money(pricing.sellPerPaxRounded)} highlight="gold" bold />
         <SummaryLine label="TỔNG GIÁ TRỊ HỢP ĐỒNG" value={money(pricing.sellTotal)} highlight="blue" bold big />
         <SummaryLine label="TỔNG CHI PHÍ" value={money(pricing.costTotalAll)} />
