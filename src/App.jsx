@@ -17,11 +17,13 @@ const newCostItem = () => ({
   id: uid(),
   name: "",
   unitCost: 0,
-  qty: 1,       // SL (số lượng người/xe/phòng...)
-  sessions: 1,  // Đêm/Lượt/Bữa (số đêm/bữa/lần)
-  unit: "Cái",  // ĐVT tự nhập
+  qty: 1,       // SL (số lượng xe/phòng/người...)
+  sessions: 1,  // Đêm/Lượt/Bữa
+  unit: "Cái",
   vatPercent: 0,
-  splitByPax: false,
+  // costType: "variable" = Biến phí (CP/Khách = Đơn giá × Đêm/Lượt)
+  //           "fixed"    = Định phí (CP/Khách = Đơn giá × SL × Đêm/Lượt ÷ pax)
+  costType: "variable",
 });
 
 // A cost category, e.g. "Vận chuyển", "Ăn uống"... user can add/remove freely
@@ -32,11 +34,11 @@ const newCostCategory = (name = "") => ({
 });
 
 const DEFAULT_CATEGORIES = () => [
-  { ...newCostCategory("Vận chuyển"), items: [{ ...newCostItem(), name: "Xe ...", unit: "Xe", splitByPax: true }] },
-  { ...newCostCategory("Ăn uống"), items: [{ ...newCostItem(), name: "Bữa chính", unit: "Bữa" }] },
-  { ...newCostCategory("Lưu trú"), items: [{ ...newCostItem(), name: "Khách sạn", unit: "Đêm" }] },
-  { ...newCostCategory("Tham quan"), items: [{ ...newCostItem(), name: "Vé tham quan", unit: "Vé" }] },
-  { ...newCostCategory("HDV"), items: [{ ...newCostItem(), name: "Công tác phí", unit: "Ngày", splitByPax: true }] },
+  { ...newCostCategory("Vận chuyển"), items: [{ ...newCostItem(), name: "Xe ...", unit: "Xe", costType: "fixed" }] },
+  { ...newCostCategory("Ăn uống"), items: [{ ...newCostItem(), name: "Bữa chính", unit: "Bữa", costType: "variable" }] },
+  { ...newCostCategory("Lưu trú"), items: [{ ...newCostItem(), name: "Khách sạn", unit: "Đêm", costType: "variable" }] },
+  { ...newCostCategory("Tham quan"), items: [{ ...newCostItem(), name: "Vé tham quan", unit: "Vé", costType: "variable" }] },
+  { ...newCostCategory("HDV"), items: [{ ...newCostItem(), name: "Công tác phí", unit: "Ngày", costType: "fixed" }] },
 ];
 
 // A point of interest / stop within a day, with its own photo
@@ -124,14 +126,30 @@ function roundTo(value, step) {
 
 // Compute totals for a single cost item, given pax count
 function itemAmounts(item, pax) {
-  // Tổng chi phí tour = Đơn giá × SL × Đêm/Lượt/Bữa (chưa chia khách)
-  const totalTour = (Number(item.unitCost) || 0) * (Number(item.qty) || 0) * (Number(item.sessions) || 1);
-  // Chi phí/khách = totalTour / pax (nếu splitByPax) hoặc giữ nguyên
-  const beforeVat = item.splitByPax && pax > 0 ? totalTour / pax : totalTour;
-  const vat = beforeVat * ((Number(item.vatPercent) || 0) / 100);
-  const afterVat = beforeVat + vat;
-  const totalTourAfterVat = item.splitByPax ? afterVat * pax : afterVat;
-  return { totalTour, beforeVat, vat, afterVat, totalTourAfterVat };
+  const unitCost = Number(item.unitCost) || 0;
+  const qty      = Number(item.qty) || 0;
+  const sessions = Number(item.sessions) || 1;
+  // Tương thích ngược với dữ liệu cũ dùng splitByPax
+  const isFixed = item.costType === "fixed" || item.splitByPax === true;
+
+  // Biến phí theo khách: CP/Khách = Đơn giá × Đêm/Lượt  (không nhân SL, SL dùng để tính tổng tour)
+  // Định phí theo tour:  CP/Khách = (Đơn giá × SL × Đêm/Lượt) ÷ pax
+  let perPax = 0;
+  let totalTour = 0;
+
+  if (isFixed) {
+    totalTour = unitCost * qty * sessions;
+    perPax    = pax > 0 ? totalTour / pax : 0;
+  } else {
+    perPax    = unitCost * sessions;           // biến phí: mỗi khách trả đơn giá × đêm/lượt
+    totalTour = perPax * pax;                  // tổng tour = nhân ngược lại
+  }
+
+  const vat              = perPax * ((Number(item.vatPercent) || 0) / 100);
+  const afterVat         = perPax + vat;
+  const totalTourAfterVat = isFixed ? afterVat * pax : totalTour * (1 + (Number(item.vatPercent) || 0) / 100);
+
+  return { perPax, totalTour, vat, afterVat, totalTourAfterVat };
 }
 
 function categoryTotal(category, pax) {
@@ -145,7 +163,7 @@ function tourCostTotal(tour) {
 
 function tourPricing(tour) {
   const pax = Math.max(1, Number(tour.pax) || 1);
-  const costPerPax = tourCostTotal(tour);
+  const costPerPax   = tourCostTotal(tour);
   const costTotalAll = costPerPax * pax;
 
   let profitPerPax = 0;
@@ -155,26 +173,25 @@ function tourPricing(tour) {
     profitPerPax = Number(tour.profitFixed) || 0;
   }
 
-  // Phụ thu tự chọn
+  // Giá bán / khách (chưa gồm phụ thu)
+  const sellPerPaxRaw     = costPerPax + profitPerPax;
+  const sellPerPaxRounded = roundTo(sellPerPaxRaw, Number(tour.roundTo) || 0);
+  const sellSubtotal      = sellPerPaxRounded * pax;   // giá bán × SL khách
+
+  // Phụ thu — mỗi mục có: qty (số lượng), amount (đơn giá)
+  // Tổng phụ thu = Σ (qty × amount)  — cộng thẳng vào tổng hợp đồng
   const surcharges = tour.surcharges || [];
-  const surchargePerPax = surcharges.reduce((sum, s) => {
-    const amt = Number(s.amount) || 0;
-    return sum + (s.perPax ? amt : amt / pax);
-  }, 0);
   const surchargeTotalAll = surcharges.reduce((sum, s) => {
-    const amt = Number(s.amount) || 0;
-    return sum + (s.perPax ? amt * pax : amt);
+    return sum + (Number(s.qty) || 1) * (Number(s.amount) || 0);
   }, 0);
 
-  const sellPerPaxRaw = costPerPax + profitPerPax + surchargePerPax;
-  const sellPerPaxRounded = roundTo(sellPerPaxRaw, Number(tour.roundTo) || 0);
-  const sellTotal = sellPerPaxRounded * pax;
+  const sellTotal   = sellSubtotal + surchargeTotalAll;
   const profitTotal = sellTotal - costTotalAll;
 
   return {
     pax, costPerPax, costTotalAll,
-    profitPerPax, surchargePerPax, surchargeTotalAll,
-    sellPerPaxRaw, sellPerPaxRounded, sellTotal, profitTotal,
+    profitPerPax, sellPerPaxRaw, sellPerPaxRounded,
+    sellSubtotal, surchargeTotalAll, sellTotal, profitTotal,
   };
 }
 
@@ -1220,19 +1237,47 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
               {/* Item rows */}
               {cat.items.map((item) => {
                 const amounts = itemAmounts(item, pax);
+                const isFixed = item.costType === "fixed" || item.splitByPax === true;
                 return (
-                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 50px 110px 110px 26px", gap: 6, alignItems: "center", padding: "6px 16px", borderTop: `1px solid ${PALETTE.border}` }}>
-                    <input className="ta-input" placeholder="Tên khoản mục" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
-                    <input className="ta-input" inputMode="numeric" placeholder="0" value={item.unitCost ? Number(item.unitCost).toLocaleString("en-US") : ""} onChange={(e) => updateItem(cat.id, item.id, { unitCost: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
-                    <input className="ta-input" type="number" min={0} value={item.qty} onChange={(e) => updateItem(cat.id, item.id, { qty: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
-                    <input className="ta-input" type="number" min={0} value={item.sessions ?? 1} onChange={(e) => updateItem(cat.id, item.id, { sessions: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
-                    <input className="ta-input" list="unit-options" value={item.unit} onChange={(e) => updateItem(cat.id, item.id, { unit: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
-                    <input className="ta-input" type="number" min={0} max={100} value={item.vatPercent} onChange={(e) => updateItem(cat.id, item.id, { vatPercent: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
-                    <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.danger }}>{formatVND(amounts.totalTourAfterVat)}</div>
-                    <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.primaryDark }}>{formatVND(amounts.afterVat)}</div>
-                    <button onClick={() => removeItem(cat.id, item.id)} aria-label="Xoá dòng" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
-                      <X size={14} />
-                    </button>
+                  <div key={item.id} style={{ borderTop: `1px solid ${PALETTE.border}` }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1.8fr 100px 46px 60px 70px 50px 110px 110px 26px", gap: 6, alignItems: "center", padding: "6px 16px" }}>
+                      <input className="ta-input" placeholder="Tên khoản mục" value={item.name} onChange={(e) => updateItem(cat.id, item.id, { name: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
+                      <input className="ta-input" inputMode="numeric" placeholder="0" value={item.unitCost ? Number(item.unitCost).toLocaleString("en-US") : ""} onChange={(e) => updateItem(cat.id, item.id, { unitCost: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                      <input className="ta-input" type="number" min={0} value={item.qty} onChange={(e) => updateItem(cat.id, item.id, { qty: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                      <input className="ta-input" type="number" min={0} value={item.sessions ?? 1} onChange={(e) => updateItem(cat.id, item.id, { sessions: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                      <input className="ta-input" list="unit-options" value={item.unit} onChange={(e) => updateItem(cat.id, item.id, { unit: e.target.value })} style={{ padding: "6px 9px", fontSize: 12.5 }} />
+                      <input className="ta-input" type="number" min={0} max={100} value={item.vatPercent} onChange={(e) => updateItem(cat.id, item.id, { vatPercent: parseNum(e.target.value) })} style={{ padding: "6px 9px", fontSize: 12.5, textAlign: "right" }} />
+                      <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.danger }}>{formatVND(amounts.totalTourAfterVat)}</div>
+                      <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 600, color: PALETTE.primaryDark }}>{formatVND(amounts.afterVat)}</div>
+                      <button onClick={() => removeItem(cat.id, item.id)} aria-label="Xoá dòng" style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {/* Tag Biến phí / Định phí */}
+                    <div style={{ display: "flex", gap: 6, padding: "0 16px 7px", alignItems: "center" }}>
+                      {[
+                        { v: "variable", label: "Biến phí theo khách", desc: `CP/Khách = Đơn giá × Đêm/Lượt` },
+                        { v: "fixed",    label: "Định phí theo tour",   desc: `CP/Khách = Tổng / ${pax} khách` },
+                      ].map(({ v, label, desc }) => {
+                        const active = isFixed ? v === "fixed" : v === "variable";
+                        return (
+                          <button key={v} onClick={() => updateItem(cat.id, item.id, { costType: v, splitByPax: v === "fixed" })}
+                            title={desc}
+                            style={{
+                              padding: "2px 9px", borderRadius: 20, fontSize: 10.5, fontWeight: 600, cursor: "pointer", border: "none",
+                              background: active ? (v === "variable" ? PALETTE.primaryLight : PALETTE.accentLight) : PALETTE.surfaceAlt,
+                              color:      active ? (v === "variable" ? PALETTE.primaryDark  : PALETTE.accent)      : PALETTE.textFaint,
+                            }}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                      <span style={{ fontSize: 10.5, color: PALETTE.textFaint, marginLeft: 4 }}>
+                        {isFixed
+                          ? `= ${formatVND(Number(item.unitCost)||0)} × ${item.qty||1} × ${item.sessions||1} ÷ ${pax} khách`
+                          : `= ${formatVND(Number(item.unitCost)||0)} × ${item.sessions||1} /khách`}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
@@ -1241,16 +1286,6 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
                 <button className="ta-btn ta-btn-ghost" style={{ padding: "3px 9px", fontSize: 11.5 }} onClick={() => addItem(cat.id)}>
                   <Plus size={11} /> Thêm dòng
                 </button>
-                {cat.items.length > 0 && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: PALETTE.textMuted, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={cat.items.every((i) => i.splitByPax)}
-                      onChange={(e) => updateCategory(cat.id, (c) => ({ ...c, items: c.items.map((i) => ({ ...i, splitByPax: e.target.checked })) }))}
-                    />
-                    Chia đều theo {pax} khách
-                  </label>
-                )}
               </div>
             </div>
           );
@@ -1273,24 +1308,24 @@ function CostCategoriesEditor({ tour, onChange, pax }) {
 /* ---------- Right sticky summary panel ---------- */
 
 function SummaryPanel({ pricing, tour, onChange, onPreview }) {
-  const setSurcharges = (surcharges) => onChange((t) => ({ ...t, surcharges }));
-  const addSurcharge = () => setSurcharges([...(tour.surcharges || []), { id: uid(), name: "", amount: 0, perPax: true }]);
+  const setSurcharges   = (s) => onChange((t) => ({ ...t, surcharges: s }));
+  const addSurcharge    = () => setSurcharges([...(tour.surcharges || []), { id: uid(), name: "", qty: 1, amount: 0 }]);
   const updateSurcharge = (id, patch) => setSurcharges((tour.surcharges || []).map((s) => s.id === id ? { ...s, ...patch } : s));
   const removeSurcharge = (id) => setSurcharges((tour.surcharges || []).filter((s) => s.id !== id));
 
   return (
     <div className="ta-card" style={{ padding: 20 }}>
-      <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 17, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 7 }}>
-        <Wallet size={17} /> Tổng kết tài chính
+      <h2 style={{ fontFamily: "'Montserrat',sans-serif", fontSize: 16, fontWeight: 700, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 7 }}>
+        <Wallet size={16} /> Tổng kết tài chính
       </h2>
 
       {/* Chi phí theo danh mục */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 10 }}>
         {(tour.costCategories || []).map((cat) => {
           const total = categoryTotal(cat, pricing.pax);
           if (total === 0) return null;
           return (
-            <div key={cat.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+            <div key={cat.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
               <span style={{ color: PALETTE.textMuted }}>{cat.name || "—"}</span>
               <span style={{ fontWeight: 500 }}>{formatVND(total)}</span>
             </div>
@@ -1298,92 +1333,105 @@ function SummaryPanel({ pricing, tour, onChange, onPreview }) {
         })}
       </div>
 
-      <div style={{ borderTop: `1px solid ${PALETTE.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ borderTop: `1px solid ${PALETTE.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
         <Row label="Chi phí / khách" value={formatVND(pricing.costPerPax)} muted />
         <Row label="Tổng chi phí" value={formatVND(pricing.costTotalAll)} muted small />
       </div>
 
-      {/* Phụ thu tự chọn */}
-      <div style={{ marginTop: 14, padding: "12px 14px", background: PALETTE.surfaceAlt, borderRadius: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: PALETTE.ink }}>Phụ thu tự chọn</span>
+      {/* Giá bán / khách */}
+      <div style={{ marginTop: 12, padding: "12px 14px", background: PALETTE.primaryLight, borderRadius: 10 }}>
+        <Row label="Giá bán / khách" value={formatVND(pricing.sellPerPaxRounded)} big />
+        <div style={{ fontSize: 11, color: PALETTE.textMuted, marginTop: 4 }}>
+          {formatVND(pricing.sellPerPaxRounded)} × {pricing.pax} khách = {formatVND(pricing.sellSubtotal)}
+        </div>
+      </div>
+
+      {/* Phụ thu tự chọn — SAU giá bán/khách */}
+      <div style={{ marginTop: 10, border: `1px dashed ${PALETTE.borderStrong}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", background: PALETTE.surfaceAlt }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: PALETTE.ink }}>+ Phụ thu tự chọn</span>
           <button className="ta-btn ta-btn-ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={addSurcharge}>
             <Plus size={11} /> Thêm
           </button>
         </div>
-        {(tour.surcharges || []).length === 0 && (
-          <div style={{ fontSize: 11.5, color: PALETTE.textFaint, fontStyle: "italic" }}>
-            VD: phụ thu phòng đơn, phụ thu cao điểm...
+
+        {(tour.surcharges || []).length === 0 ? (
+          <div style={{ fontSize: 11, color: PALETTE.textFaint, fontStyle: "italic", padding: "8px 14px" }}>
+            VD: phụ thu phòng đơn, phụ thu cao điểm lễ...
           </div>
-        )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {(tour.surcharges || []).map((s) => (
-            <div key={s.id}>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input
-                  className="ta-input"
-                  placeholder="Tên phụ thu"
-                  value={s.name}
-                  onChange={(e) => updateSurcharge(s.id, { name: e.target.value })}
-                  style={{ flex: 1, padding: "5px 8px", fontSize: 12 }}
-                />
-                <input
-                  className="ta-input"
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={s.amount ? Number(s.amount).toLocaleString("en-US") : ""}
-                  onChange={(e) => updateSurcharge(s.id, { amount: parseNum(e.target.value) })}
-                  style={{ width: 88, padding: "5px 8px", fontSize: 12, textAlign: "right" }}
-                />
-                <button onClick={() => removeSurcharge(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint, flexShrink: 0 }}>
-                  <X size={14} />
-                </button>
-              </div>
-              <div style={{ display: "flex", gap: 10, marginTop: 4, paddingLeft: 2 }}>
-                {[{ v: true, l: "Theo đầu khách" }, { v: false, l: "Cố định cả đoàn" }].map(({ v, l }) => (
-                  <label key={l} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: PALETTE.textMuted, cursor: "pointer" }}>
-                    <input type="radio" name={`pt-${s.id}`} checked={s.perPax === v} onChange={() => updateSurcharge(s.id, { perPax: v })} />
-                    {l}
-                  </label>
-                ))}
-                {s.amount > 0 && (
-                  <span style={{ fontSize: 11, color: PALETTE.primaryDark, fontWeight: 600, marginLeft: "auto" }}>
-                    = {formatVND(s.perPax ? s.amount * pricing.pax : s.amount)} / đoàn
-                  </span>
-                )}
-              </div>
+        ) : (
+          <div style={{ padding: "6px 14px 10px" }}>
+            {/* Header cột */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 40px 88px 20px", gap: 5, marginBottom: 5 }}>
+              <span style={{ fontSize: 10, color: PALETTE.textFaint, fontWeight: 700 }}>DIỄN GIẢI</span>
+              <span style={{ fontSize: 10, color: PALETTE.textFaint, fontWeight: 700, textAlign: "right" }}>SL</span>
+              <span style={{ fontSize: 10, color: PALETTE.textFaint, fontWeight: 700, textAlign: "right" }}>TỔNG CỘNG</span>
+              <span />
             </div>
-          ))}
-        </div>
-        {(tour.surcharges || []).some((s) => s.amount > 0) && (
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${PALETTE.border}`, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600 }}>
-            <span style={{ color: PALETTE.textMuted }}>Tổng phụ thu / khách</span>
-            <span style={{ color: PALETTE.accent }}>{formatVND(pricing.surchargePerPax)}</span>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {(tour.surcharges || []).map((s) => {
+                const rowTotal = (Number(s.qty) || 1) * (Number(s.amount) || 0);
+                return (
+                  <div key={s.id} style={{ display: "grid", gridTemplateColumns: "1fr 40px 88px 20px", gap: 5, alignItems: "center" }}>
+                    <input className="ta-input" placeholder="Diễn giải" value={s.name}
+                      onChange={(e) => updateSurcharge(s.id, { name: e.target.value })}
+                      style={{ padding: "5px 7px", fontSize: 12 }} />
+                    <input className="ta-input" type="number" min={1} value={s.qty ?? 1}
+                      onChange={(e) => updateSurcharge(s.id, { qty: parseNum(e.target.value) })}
+                      style={{ padding: "5px 5px", fontSize: 12, textAlign: "right" }} />
+                    <input className="ta-input" inputMode="numeric" placeholder="Đơn giá"
+                      value={s.amount ? Number(s.amount).toLocaleString("en-US") : ""}
+                      onChange={(e) => updateSurcharge(s.id, { amount: parseNum(e.target.value) })}
+                      style={{ padding: "5px 7px", fontSize: 12, textAlign: "right" }} />
+                    <button onClick={() => removeSurcharge(s.id)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {pricing.surchargeTotalAll > 0 && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${PALETTE.border}`, display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 700 }}>
+                <span style={{ color: PALETTE.textMuted }}>Tổng phụ thu</span>
+                <span style={{ color: PALETTE.accent }}>{formatVND(pricing.surchargeTotalAll)}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Giá bán */}
-      <div style={{ marginTop: 14, padding: "14px 16px", background: PALETTE.primaryLight, borderRadius: 10 }}>
-        <Row label="Giá bán / khách" value={formatVND(pricing.sellPerPaxRounded)} big />
-        <Row label="Tổng giá trị hợp đồng" value={formatVND(pricing.sellTotal)} small />
+      {/* Tổng giá trị hợp đồng = Giá bán × SL khách + Phụ thu */}
+      <div style={{ marginTop: 10, padding: "13px 14px", background: PALETTE.primary, borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>TỔNG GIÁ TRỊ HỢP ĐỒNG</span>
+          <span style={{ fontSize: 20, fontWeight: 800, color: "white" }}>{formatVND(pricing.sellTotal)}</span>
+        </div>
+        <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)", marginTop: 5, lineHeight: 1.6 }}>
+          Giá bán {formatVND(pricing.sellPerPaxRounded)} × {pricing.pax} khách = {formatVND(pricing.sellSubtotal)}
+          {pricing.surchargeTotalAll > 0 && ` + Phụ thu ${formatVND(pricing.surchargeTotalAll)}`}
+        </div>
       </div>
 
-      <div style={{ marginTop: 10, padding: "12px 16px", background: pricing.profitTotal >= 0 ? PALETTE.accentLight : PALETTE.dangerLight, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: pricing.profitTotal >= 0 ? PALETTE.accent : PALETTE.danger, display: "flex", alignItems: "center", gap: 6 }}>
-          <TrendingUp size={14} /> Tổng lợi nhuận
+      {/* Lợi nhuận */}
+      <div style={{ marginTop: 8, padding: "10px 14px", background: pricing.profitTotal >= 0 ? PALETTE.accentLight : PALETTE.dangerLight, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: pricing.profitTotal >= 0 ? PALETTE.accent : PALETTE.danger, display: "flex", alignItems: "center", gap: 5 }}>
+          <TrendingUp size={14} /> Lợi nhuận dự kiến
         </span>
-        <span style={{ fontSize: 15, fontWeight: 700, color: pricing.profitTotal >= 0 ? PALETTE.accent : PALETTE.danger }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: pricing.profitTotal >= 0 ? PALETTE.accent : PALETTE.danger }}>
           {formatVND(pricing.profitTotal)}
         </span>
       </div>
 
-      <button className="ta-btn ta-btn-primary" onClick={onPreview} style={{ width: "100%", justifyContent: "center", marginTop: 16, padding: "11px" }}>
+      <button className="ta-btn ta-btn-primary" onClick={onPreview} style={{ width: "100%", justifyContent: "center", marginTop: 14, padding: "11px" }}>
         <Eye size={16} /> Xem & in báo giá
       </button>
     </div>
   );
 }
+
 
 function Row({ label, value, muted, big, small }) {
   return (
