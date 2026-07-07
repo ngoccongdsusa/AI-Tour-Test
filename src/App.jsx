@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Copy, Printer, ChevronDown, ChevronUp, MapPin, Calendar,
   Users, ArrowLeft, FileText, Wallet, Eye, Compass, X, Check, TrendingUp,
   ClipboardList, Image as ImageIcon, GripVertical, Folder, Percent, Camera,
-  DollarSign, Share2, Link, Star, CheckCircle, XCircle,
+  DollarSign, Share2, Link, Star, CheckCircle, XCircle, Lock,
 } from "lucide-react";
 
 /* ============================================================
@@ -263,18 +263,49 @@ async function loadPublicTour(encoded) {
   }
 }
 
-// Đọc dữ liệu tour từ URL hash: /#/view/BASE64DATA
-function getPublicTourDataFromUrl() {
+// ── Link gửi Sếp: encode toàn bộ tour + hash password ──
+async function hashPassword(password) {
+  const msgBuffer = new TextEncoder().encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 12); // 12 ký tự đầu
+}
+
+async function publishTourApproval(tour, password) {
   try {
-    // Lấy hash thô, bỏ ký tự # đầu
-    const hash = window.location.hash.slice(1); // "/view/BASE64..."
-    if (hash.startsWith("/view/")) {
-      return hash.slice(6); // lấy phần base64url sau "/view/"
-    }
-    return null;
-  } catch {
+    const pwHash = await hashPassword(password);
+    const json = JSON.stringify(tour); // giữ nguyên toàn bộ kể cả ghi chú nội bộ
+    const encoded = toBase64Url(json);
+    return `${pwHash}.${encoded}`; // format: HASH12CHARS.BASE64DATA
+  } catch (e) {
+    console.error("Encode approval tour failed", e);
     return null;
   }
+}
+
+async function loadApprovalTour(payload, passwordInput) {
+  try {
+    const dotIndex = payload.indexOf(".");
+    if (dotIndex === -1) return { error: "invalid" };
+    const storedHash = payload.slice(0, dotIndex);
+    const encoded    = payload.slice(dotIndex + 1);
+    const inputHash  = await hashPassword(passwordInput);
+    if (inputHash !== storedHash) return { error: "wrong_password" };
+    const json = fromBase64Url(encoded);
+    return { tour: JSON.parse(json) };
+  } catch {
+    return { error: "invalid" };
+  }
+}
+
+// Đọc URL hash — hỗ trợ cả 2 loại link
+function getHashPayload() {
+  try {
+    const hash = window.location.hash.slice(1);
+    if (hash.startsWith("/view/"))    return { type: "client",   data: hash.slice(6) };
+    if (hash.startsWith("/approve/")) return { type: "approval", data: hash.slice(9) };
+    return null;
+  } catch { return null; }
 }
 
 /* ============================================================
@@ -414,12 +445,16 @@ export default function App() {
   );
 
   useEffect(() => {
-    const encoded = getPublicTourDataFromUrl();
-    if (encoded) {
+    const payload = getHashPayload();
+    if (payload?.type === "client") {
       setIsPublicMode(true);
-      loadPublicTour(encoded).then((t) => {
+      loadPublicTour(payload.data).then((t) => {
         setPublicTour(t || "not_found");
       });
+    } else if (payload?.type === "approval") {
+      setIsPublicMode(true);
+      // Lưu payload để ApprovalPasswordGate xử lý
+      setPublicTour({ __approvalPayload: payload.data });
     } else {
       loadTours().then((t) => setTours(t));
     }
@@ -460,6 +495,15 @@ export default function App() {
           <GlobalStyle />
           <div style={styles.loadingSpinner} />
           <p style={{ color: PALETTE.textMuted, fontSize: 14 }}>Đang tải báo giá...</p>
+        </div>
+      );
+    }
+    // Link Sếp — yêu cầu nhập password
+    if (publicTour?.__approvalPayload) {
+      return (
+        <div style={styles.appShell}>
+          <GlobalStyle />
+          <ApprovalPasswordGate payload={publicTour.__approvalPayload} />
         </div>
       );
     }
@@ -1471,26 +1515,42 @@ function StopCard({ stop, onUpdate, onRemove }) {
 
 function QuotePreview({ tour, onBack }) {
   const [mode, setMode] = useState("client");
-  const [currency, setCurrency] = useState(tour.displayCurrency || "VND");
-  const [exchangeRate, setExchangeRate] = useState(tour.exchangeRate || 25400);
   const [shareLink, setShareLink] = useState(null);
-  const [sharing, setSharing] = useState(false);
+  const [shareLinkType, setShareLinkType] = useState(null); // "client" | "approval"
+  const [sharing, setSharing] = useState(null); // null | "client" | "approval"
+  const [approvalPassword, setApprovalPassword] = useState("");
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
   const pricing = tourPricing(tour);
   const handlePrint = () => window.print();
 
-  const handleShare = async () => {
-    setSharing(true);
+  const handleShareClient = async () => {
+    setSharing("client");
     try {
       const encoded = await publishTour(tour);
       if (encoded) {
         const url = `${window.location.origin}${window.location.pathname}#/view/${encoded}`;
         setShareLink(url);
+        setShareLinkType("client");
         await navigator.clipboard.writeText(url).catch(() => {});
       }
-    } catch (e) {
-      console.error(e);
-    }
-    setSharing(false);
+    } catch (e) { console.error(e); }
+    setSharing(null);
+  };
+
+  const handleShareApproval = async () => {
+    if (!approvalPassword.trim()) return;
+    setSharing("approval");
+    try {
+      const encoded = await publishTourApproval(tour, approvalPassword.trim());
+      if (encoded) {
+        const url = `${window.location.origin}${window.location.pathname}#/approve/${encoded}`;
+        setShareLink(url);
+        setShareLinkType("approval");
+        await navigator.clipboard.writeText(url).catch(() => {});
+      }
+    } catch (e) { console.error(e); }
+    setSharing(null);
+    setShowPasswordInput(false);
   };
 
   return (
@@ -1506,64 +1566,87 @@ function QuotePreview({ tour, onBack }) {
               <Wallet size={15}/> Bảng chiết tính
             </button>
           </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button className="ta-btn ta-btn-ghost" onClick={handleShare} disabled={sharing}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button className="ta-btn ta-btn-ghost" onClick={handleShareClient} disabled={sharing === "client"}
               style={{ borderColor: PALETTE.primary, color: PALETTE.primary }}>
-              <Share2 size={15}/> {sharing ? "Đang tạo..." : "Tạo link gửi khách"}
+              <Share2 size={15}/> {sharing === "client" ? "Đang tạo..." : "Link gửi khách"}
+            </button>
+            <button className="ta-btn ta-btn-ghost"
+              onClick={() => { setShowPasswordInput(!showPasswordInput); setShareLink(null); }}
+              style={{ borderColor: PALETTE.accent, color: PALETTE.accent }}>
+              <Lock size={15}/> Link gửi Sếp duyệt
             </button>
             <button className="ta-btn ta-btn-primary" onClick={handlePrint}><Printer size={16}/> In / PDF</button>
           </div>
         </div>
 
-        {/* Share link banner */}
-        {shareLink && (
-          <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 12px" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", background:PALETTE.primaryLight, borderRadius:10, border:`1px solid ${PALETTE.primary}` }}>
-              <Link size={14} color={PALETTE.primary}/>
-              <input readOnly value={shareLink} style={{ flex:1, border:"none", background:"transparent", fontSize:12.5, color:PALETTE.primaryDark, outline:"none", fontFamily:"'Montserrat',sans-serif" }}/>
-              <button className="ta-btn ta-btn-primary" style={{ padding:"5px 12px", fontSize:12 }}
-                onClick={()=>navigator.clipboard.writeText(shareLink).catch(()=>{})}>
-                Copy
-              </button>
-              <button onClick={()=>setShareLink(null)} style={{ background:"none", border:"none", cursor:"pointer", color:PALETTE.textFaint }}>
-                <X size={14}/>
-              </button>
-            </div>
-            <div style={{ fontSize:11, color:PALETTE.textMuted, marginTop:5, paddingLeft:2 }}>
-              ✓ Đã copy vào clipboard · Khách mở link này sẽ thấy trang báo giá online (không cần đăng nhập)
+        {/* Form nhập password cho link Sếp */}
+        {showPasswordInput && (
+          <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 14px" }}>
+            <div style={{ padding:"14px 16px", background: PALETTE.accentLight, borderRadius:10, border:`1px solid ${PALETTE.accent}` }}>
+              <div style={{ fontSize:12.5, fontWeight:700, color:PALETTE.accent, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
+                <Lock size={14}/> Tạo link gửi Sếp — bảo vệ bằng mật khẩu
+              </div>
+              <div style={{ fontSize:11.5, color:PALETTE.textMuted, marginBottom:10, lineHeight:1.6 }}>
+                Sếp sẽ thấy <strong>bảng chiết tính đầy đủ</strong> (giá vốn, lợi nhuận, phụ thu). Nhập mật khẩu để bảo vệ link — chỉ ai có mật khẩu mới mở được.
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <input
+                  className="ta-input"
+                  type="password"
+                  placeholder="Nhập mật khẩu (VD: sep123)"
+                  value={approvalPassword}
+                  onChange={(e) => setApprovalPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleShareApproval()}
+                  style={{ flex:1, padding:"8px 12px", fontSize:13 }}
+                  autoFocus
+                />
+                <button className="ta-btn"
+                  onClick={handleShareApproval}
+                  disabled={!approvalPassword.trim() || sharing === "approval"}
+                  style={{ background: PALETTE.accent, color:"white", padding:"8px 16px", flexShrink:0 }}>
+                  {sharing === "approval" ? "Đang tạo..." : "Tạo link"}
+                </button>
+                <button onClick={() => { setShowPasswordInput(false); setApprovalPassword(""); }}
+                  style={{ background:"none", border:"none", cursor:"pointer", color:PALETTE.textFaint }}>
+                  <X size={16}/>
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Currency bar */}
-        <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 12px", display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-          <span style={{ fontSize:12, color:PALETTE.textMuted, display:"flex", alignItems:"center", gap:5 }}>
-            <DollarSign size={13}/> Tiền tệ:
-          </span>
-          <div style={{ display:"flex", gap:4, background:PALETTE.surfaceAlt, padding:3, borderRadius:8 }}>
-            {["VND","USD"].map((c)=>(
-              <button key={c} onClick={()=>setCurrency(c)} className="ta-btn"
-                style={{ padding:"5px 14px", fontSize:12.5, background:currency===c?PALETTE.surface:"transparent", border:"none", boxShadow:currency===c?"0 1px 2px rgba(0,0,0,0.06)":"none", color:currency===c?PALETTE.ink:PALETTE.textMuted, fontWeight:currency===c?600:500 }}>
-                {c}
+        {/* Share link banner */}
+        {shareLink && (
+          <div style={{ maxWidth:900, margin:"0 auto", padding:"0 24px 12px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", borderRadius:10,
+              background: shareLinkType === "approval" ? PALETTE.accentLight : PALETTE.primaryLight,
+              border: `1px solid ${shareLinkType === "approval" ? PALETTE.accent : PALETTE.primary}` }}>
+              <Lock size={14} color={shareLinkType === "approval" ? PALETTE.accent : PALETTE.primary}/>
+              <input readOnly value={shareLink} style={{ flex:1, border:"none", background:"transparent", fontSize:12, color: shareLinkType === "approval" ? PALETTE.accent : PALETTE.primaryDark, outline:"none", fontFamily:"'Montserrat',sans-serif" }}/>
+              <button className="ta-btn" style={{ padding:"5px 12px", fontSize:12, background: shareLinkType === "approval" ? PALETTE.accent : PALETTE.primary, color:"white", flexShrink:0 }}
+                onClick={() => navigator.clipboard.writeText(shareLink).catch(()=>{})}>
+                Copy
               </button>
-            ))}
-          </div>
-          {currency==="USD" && (
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <span style={{ fontSize:12, color:PALETTE.textMuted }}>1 USD =</span>
-              <input className="ta-input" inputMode="numeric" value={exchangeRate?Number(exchangeRate).toLocaleString("vi-VN"):""} onChange={(e)=>setExchangeRate(parseNum(e.target.value))} style={{ width:100, padding:"5px 8px", fontSize:12.5 }}/>
-              <span style={{ fontSize:12, color:PALETTE.textMuted }}>₫</span>
+              <button onClick={() => setShareLink(null)} style={{ background:"none", border:"none", cursor:"pointer", color:PALETTE.textFaint }}>
+                <X size={14}/>
+              </button>
             </div>
-          )}
-        </div>
+            <div style={{ fontSize:11, color:PALETTE.textMuted, marginTop:5, paddingLeft:2 }}>
+              {shareLinkType === "approval"
+                ? `🔐 Link Sếp duyệt — cần nhập đúng mật khẩu để xem bảng chiết tính đầy đủ`
+                : `✓ Link gửi khách — khách thấy lịch trình và giá bán, không thấy giá vốn`}
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ padding:"32px 24px 80px" }}>
         <div id="print-area" style={{ maxWidth:794, margin:"0 auto" }}>
           {mode==="client" ? (
-            <ClientItineraryDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate}/>
+            <ClientItineraryDoc tour={tour} pricing={pricing} currency="USD" exchangeRate={1}/>
           ) : (
-            <CostBreakdownDoc tour={tour} pricing={pricing} currency={currency} exchangeRate={exchangeRate}/>
+            <CostBreakdownDoc tour={tour} pricing={pricing} currency="USD" exchangeRate={1}/>
           )}
         </div>
       </div>
@@ -1885,6 +1968,104 @@ function toRoman(num) {
 }
 
 /* ============================================================
+   APPROVAL PASSWORD GATE — màn nhập password xem bảng chiết tính
+   ============================================================ */
+
+function ApprovalPasswordGate({ payload }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [tour, setTour] = useState(null);
+
+  const handleSubmit = async () => {
+    if (!password.trim()) return;
+    setLoading(true);
+    setError(null);
+    const result = await loadApprovalTour(payload, password.trim());
+    setLoading(false);
+    if (result.error === "wrong_password") {
+      setError("Mật khẩu không đúng. Vui lòng thử lại.");
+    } else if (result.error) {
+      setError("Link không hợp lệ hoặc đã hết hạn.");
+    } else {
+      setTour(result.tour);
+    }
+  };
+
+  // Sau khi unlock — hiện bảng chiết tính
+  if (tour) {
+    const pricing = (() => { try { return tourPricing(tour); } catch { return { sellTotal:0, sellPerPaxRounded:0, pax:1, costTotalAll:0, profitTotal:0, costPerPax:0, sellSubtotal:0, surchargeTotalAll:0 }; } })();
+    return (
+      <div style={{ minHeight:"100vh", background:PALETTE.bg, fontFamily:"'Montserrat',sans-serif" }}>
+        <div style={{ background: PALETTE.accent, padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, color:"white" }}>
+            <Lock size={16}/>
+            <span style={{ fontWeight:700, fontSize:14 }}>Bảng chiết tính — {tour.name || "Tour"}</span>
+            <span style={{ fontSize:11, background:"rgba(255,255,255,0.2)", padding:"2px 8px", borderRadius:20 }}>Chế độ phê duyệt</span>
+          </div>
+          <button className="ta-btn" onClick={() => window.print()}
+            style={{ background:"white", color:PALETTE.accent, padding:"6px 14px", fontSize:12 }}>
+            <Printer size={13}/> In / PDF
+          </button>
+        </div>
+        <div style={{ maxWidth:860, margin:"0 auto", padding:"32px 24px 80px" }}>
+          <CostBreakdownDoc tour={tour} pricing={pricing} currency="USD" exchangeRate={1}/>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight:"100vh", background:PALETTE.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Montserrat',sans-serif", padding:24 }}>
+      <div style={{ width:"100%", maxWidth:400 }}>
+        <div className="ta-card" style={{ padding:"36px 32px" }}>
+          {/* Icon + tiêu đề */}
+          <div style={{ textAlign:"center", marginBottom:24 }}>
+            <div style={{ width:56, height:56, borderRadius:14, background:PALETTE.accentLight, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
+              <Lock size={26} color={PALETTE.accent}/>
+            </div>
+            <h1 style={{ fontSize:20, fontWeight:800, margin:"0 0 6px", color:PALETTE.ink }}>Phê duyệt báo giá</h1>
+            <p style={{ fontSize:13, color:PALETTE.textMuted, margin:0, lineHeight:1.6 }}>
+              Bảng chiết tính được bảo vệ.<br/>Nhập mật khẩu để xem nội dung.
+            </p>
+          </div>
+
+          {/* Input password */}
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <input
+              className="ta-input"
+              type="password"
+              placeholder="Nhập mật khẩu"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              style={{ padding:"11px 14px", fontSize:14, textAlign:"center", letterSpacing:"0.1em" }}
+              autoFocus
+            />
+            {error && (
+              <div style={{ fontSize:12.5, color:PALETTE.danger, textAlign:"center", padding:"8px 12px", background:PALETTE.dangerLight, borderRadius:8 }}>
+                {error}
+              </div>
+            )}
+            <button
+              className="ta-btn"
+              onClick={handleSubmit}
+              disabled={loading || !password.trim()}
+              style={{ background:PALETTE.accent, color:"white", justifyContent:"center", padding:"11px", fontSize:14, fontWeight:700 }}>
+              {loading ? "Đang kiểm tra..." : "Mở bảng chiết tính"}
+            </button>
+          </div>
+
+          <p style={{ fontSize:11, color:PALETTE.textFaint, textAlign:"center", marginTop:16, lineHeight:1.5 }}>
+            Liên hệ người tạo báo giá để nhận mật khẩu
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    ERROR BOUNDARY — bắt crash khi render public tour
    ============================================================ */
 
@@ -1934,26 +2115,16 @@ function PublicTourView({ tour }) {
     highlights: "",
     includes: [],
     excludes: [],
-    itinerary: [],
-    costCategories: [],
     profitMode: "percent",
     profitPercent: 0,
     profitFixed: 0,
     roundTo: 0,
-    company: {},
-    agent: {},
+    surcharges: [],
     ...tour,
-    company: { name: "", phone: "", email: "", address: "", website: "", logo: "", ...(tour?.company || {}) },
-    agent: { name: "", title: "", phone: "", email: "", zalo: "", ...(tour?.agent || {}) },
-    itinerary: (tour?.itinerary || []).map(day => ({
-      id: "", dayNumber: 1, title: "", content: "", summary: "", meals: [], stops: [],
-      ...day,
-      stops: (day?.stops || []),
-    })),
-    costCategories: (tour?.costCategories || []).map(cat => ({
-      id: "", name: "", items: [], ...cat,
-      items: (cat?.items || []),
-    })),
+    company:        { name: "", phone: "", email: "", address: "", website: "", logo: "", ...(tour?.company || {}) },
+    agent:          { name: "", title: "", phone: "", email: "", zalo: "", ...(tour?.agent || {}) },
+    itinerary:      (tour?.itinerary || []).map(day => ({ id: "", dayNumber: 1, title: "", content: "", summary: "", meals: [], stops: [], ...day, stops: day?.stops || [] })),
+    costCategories: (tour?.costCategories || []).map(cat => ({ id: "", name: "", items: [], ...cat, items: cat?.items || [] })),
   };
 
   // Tính giá an toàn — wrap trong try/catch
