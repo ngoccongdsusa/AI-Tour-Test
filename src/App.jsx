@@ -4,6 +4,8 @@ import {
   Users, ArrowLeft, FileText, Wallet, Eye, Compass, X, Check, TrendingUp,
   ClipboardList, Image as ImageIcon, GripVertical, Folder, Percent, Camera,
   DollarSign, Share2, Link, Star, CheckCircle, XCircle, Lock,
+  LayoutDashboard, Ticket, Building2, Bus, ChevronRight, Search,
+  Hash, Tag, Clock, Edit3, BarChart2,
 } from "lucide-react";
 
 /* ============================================================
@@ -98,8 +100,61 @@ const newTour = () => ({
 });
 
 /* ============================================================
-   HELPERS
+   DATA MODELS — BÁO GIÁ VÉ / PHÒNG / XE
    ============================================================ */
+
+// --- Vé tham quan ---
+const newTicketItem = () => ({ id: uid(), name: "", type: "Người lớn", unitPrice: 0, qty: 1, note: "" });
+const newTicketQuote = () => ({
+  id: uid(), name: "", destination: "", visitDate: "", pax: 1,
+  items: [newTicketItem()],
+  note: "", agent: {}, company: {},
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+// --- Phòng khách sạn ---
+const newRoomItem = () => ({ id: uid(), roomType: "Phòng đôi", nights: 1, qty: 1, unitPrice: 0, board: "BB", note: "" });
+const newHotelQuote = () => ({
+  id: uid(), name: "", hotelName: "", location: "", checkIn: "", checkOut: "", nights: 1, pax: 1,
+  items: [newRoomItem()],
+  taxes: 0, taxPercent: 10, includeTax: false,
+  note: "", agent: {}, company: {},
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+// --- Báo giá xe ---
+const VEHICLE_TYPES = ["Xe 4 chỗ", "Xe 7 chỗ", "Xe 16 chỗ", "Xe 29 chỗ", "Xe 35 chỗ", "Xe 45 chỗ", "Xe buýt"];
+const newCarItem = () => ({ id: uid(), vehicleType: "Xe 16 chỗ", route: "", days: 1, qty: 1, unitPrice: 0, note: "" });
+const newCarQuote = () => ({
+  id: uid(), name: "", departure: "", destination: "", startDate: "", endDate: "", pax: 1,
+  items: [newCarItem()],
+  note: "", agent: {}, company: {},
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+// Storage keys
+const STORAGE_TICKETS = "baogiatour_tickets_v1";
+const STORAGE_HOTELS  = "baogiatour_hotels_v1";
+const STORAGE_CARS    = "baogiatour_cars_v1";
+
+async function loadList(key) {
+  try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; }
+}
+async function saveList(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); } catch {}
+}
+
+// Tính tổng cho từng loại quote
+function ticketTotal(q) {
+  return (q.items || []).reduce((s, i) => s + (Number(i.unitPrice)||0) * (Number(i.qty)||0), 0);
+}
+function hotelTotal(q) {
+  const sub = (q.items || []).reduce((s, i) => s + (Number(i.unitPrice)||0) * (Number(i.qty)||0) * (Number(i.nights)||1), 0);
+  return q.includeTax ? sub * (1 + (Number(q.taxPercent)||0)/100) : sub;
+}
+function carTotal(q) {
+  return (q.items || []).reduce((s, i) => s + (Number(i.unitPrice)||0) * (Number(i.qty)||0) * (Number(i.days)||1), 0);
+}
 
 // Tất cả số tiền hiển thị bằng USD
 const formatUSD = (n) => {
@@ -418,6 +473,13 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [publicTour, setPublicTour] = useState(null);
   const [isPublicMode, setIsPublicMode] = useState(false);
+  // Dashboard section
+  const [section, setSection] = useState("tours"); // "tours" | "tickets" | "hotels" | "cars"
+  // 3 module mới
+  const [tickets, setTickets] = useState(null);
+  const [hotels,  setHotels]  = useState(null);
+  const [cars,    setCars]    = useState(null);
+  const [activeItemId, setActiveItemId] = useState(null);
   const saveTimer = useRef(null);
 
   const persist = useCallback((next) => {
@@ -448,15 +510,15 @@ export default function App() {
     const payload = getHashPayload();
     if (payload?.type === "client") {
       setIsPublicMode(true);
-      loadPublicTour(payload.data).then((t) => {
-        setPublicTour(t || "not_found");
-      });
+      loadPublicTour(payload.data).then((t) => setPublicTour(t || "not_found"));
     } else if (payload?.type === "approval") {
       setIsPublicMode(true);
-      // Lưu payload để ApprovalPasswordGate xử lý
       setPublicTour({ __approvalPayload: payload.data });
     } else {
       loadTours().then((t) => setTours(t));
+      loadList(STORAGE_TICKETS).then(setTickets);
+      loadList(STORAGE_HOTELS).then(setHotels);
+      loadList(STORAGE_CARS).then(setCars);
     }
   }, []);
 
@@ -528,8 +590,14 @@ export default function App() {
     );
   }
 
+  // Helper persist cho 3 module mới
+  const persistList = (key, setter, list) => {
+    setter(list);
+    saveList(key, list);
+  };
+
   // Chế độ app bình thường
-  if (tours === null) {
+  if (tours === null || tickets === null || hotels === null || cars === null) {
     return (
       <div style={styles.loadingScreen}>
         <GlobalStyle />
@@ -543,12 +611,16 @@ export default function App() {
     <div style={styles.appShell}>
       <GlobalStyle />
       {view === "list" && (
-        <TourList
-          tours={tours}
-          onOpen={(id) => { setActiveTourId(id); setView("edit"); }}
-          onCreate={createTour}
-          onDuplicate={duplicateTour}
-          onDelete={deleteTour}
+        <Dashboard
+          section={section} setSection={setSection}
+          tours={tours} onOpenTour={(id) => { setActiveTourId(id); setView("edit"); }}
+          onCreateTour={createTour} onDuplicateTour={duplicateTour} onDeleteTour={deleteTour}
+          tickets={tickets}
+          onSaveTickets={(list) => persistList(STORAGE_TICKETS, setTickets, list)}
+          hotels={hotels}
+          onSaveHotels={(list) => persistList(STORAGE_HOTELS, setHotels, list)}
+          cars={cars}
+          onSaveCars={(list) => persistList(STORAGE_CARS, setCars, list)}
         />
       )}
       {view === "edit" && activeTour && (
@@ -569,7 +641,513 @@ export default function App() {
 }
 
 /* ============================================================
-   TOUR LIST (HOME)
+   DASHBOARD — sidebar navigation + 4 sections
+   ============================================================ */
+
+const NAV_ITEMS = [
+  { key: "tours",   label: "Báo giá Tour",        Icon: Compass,   color: "#0F5D52" },
+  { key: "tickets", label: "Báo giá Vé tham quan", Icon: Ticket,    color: "#7C3AED" },
+  { key: "hotels",  label: "Báo giá Phòng KS",     Icon: Building2, color: "#0369A1" },
+  { key: "cars",    label: "Báo giá Xe",            Icon: Bus,       color: "#B45309" },
+];
+
+function Dashboard({
+  section, setSection,
+  tours, onOpenTour, onCreateTour, onDuplicateTour, onDeleteTour,
+  tickets, onSaveTickets,
+  hotels,  onSaveHotels,
+  cars,    onSaveCars,
+}) {
+  const allCounts = {
+    tours:   tours.length,
+    tickets: tickets.length,
+    hotels:  hotels.length,
+    cars:    cars.length,
+  };
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      {/* Sidebar */}
+      <aside style={{ width: 230, background: PALETTE.ink, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}>
+        {/* Logo */}
+        <div style={{ padding: "22px 20px 18px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: PALETTE.primary, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Compass size={18} color="white" />
+            </div>
+            <div>
+              <div style={{ color: "white", fontWeight: 800, fontSize: 14, letterSpacing: "-0.01em" }}>TourQuote</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10.5 }}>Quản lý báo giá</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Nav */}
+        <nav style={{ padding: "12px 10px", flex: 1 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", padding: "4px 10px 8px", textTransform: "uppercase" }}>
+            Modules
+          </div>
+          {NAV_ITEMS.map(({ key, label, Icon, color }) => {
+            const active = section === key;
+            return (
+              <button key={key} onClick={() => setSection(key)} style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 10px",
+                borderRadius: 9, border: "none", cursor: "pointer", marginBottom: 2, textAlign: "left",
+                background: active ? "rgba(255,255,255,0.1)" : "transparent",
+                transition: "background .15s",
+              }}>
+                <div style={{ width: 28, height: 28, borderRadius: 7, background: active ? color : "rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background .15s" }}>
+                  <Icon size={15} color={active ? "white" : "rgba(255,255,255,0.4)"} />
+                </div>
+                <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? "white" : "rgba(255,255,255,0.55)", flex: 1, letterSpacing: "-0.01em" }}>
+                  {label}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", borderRadius: 20, padding: "1px 7px" }}>
+                  {allCounts[key]}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Stats bottom */}
+        <div style={{ padding: "14px 16px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>Tổng báo giá</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "white", marginTop: 2 }}>
+            {Object.values(allCounts).reduce((a, b) => a + b, 0)}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main style={{ flex: 1, background: PALETTE.bg, overflow: "auto" }}>
+        {section === "tours" && (
+          <TourList tours={tours} onOpen={onOpenTour} onCreate={onCreateTour} onDuplicate={onDuplicateTour} onDelete={onDeleteTour} />
+        )}
+        {section === "tickets" && (
+          <GenericQuoteList
+            type="tickets" title="Báo giá Vé tham quan" Icon={Ticket} color="#7C3AED"
+            items={tickets} onSave={onSaveTickets}
+            newItem={newTicketQuote} calcTotal={ticketTotal}
+            renderEditor={(item, onChange, onClose) => <TicketEditor item={item} onChange={onChange} onClose={onClose} />}
+            fields={[
+              { key: "name", label: "Tên báo giá" },
+              { key: "destination", label: "Địa điểm" },
+              { key: "visitDate", label: "Ngày tham quan" },
+            ]}
+          />
+        )}
+        {section === "hotels" && (
+          <GenericQuoteList
+            type="hotels" title="Báo giá Phòng khách sạn" Icon={Building2} color="#0369A1"
+            items={hotels} onSave={onSaveHotels}
+            newItem={newHotelQuote} calcTotal={hotelTotal}
+            renderEditor={(item, onChange, onClose) => <HotelEditor item={item} onChange={onChange} onClose={onClose} />}
+            fields={[
+              { key: "name", label: "Tên báo giá" },
+              { key: "hotelName", label: "Khách sạn" },
+              { key: "checkIn", label: "Check-in" },
+            ]}
+          />
+        )}
+        {section === "cars" && (
+          <GenericQuoteList
+            type="cars" title="Báo giá Xe" Icon={Bus} color="#B45309"
+            items={cars} onSave={onSaveCars}
+            newItem={newCarQuote} calcTotal={carTotal}
+            renderEditor={(item, onChange, onClose) => <CarEditor item={item} onChange={onChange} onClose={onClose} />}
+            fields={[
+              { key: "name", label: "Tên báo giá" },
+              { key: "departure", label: "Điểm đi" },
+              { key: "startDate", label: "Ngày" },
+            ]}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+/* ============================================================
+   GENERIC QUOTE LIST — dùng chung cho vé / phòng / xe
+   ============================================================ */
+
+function GenericQuoteList({ type, title, Icon, color, items, onSave, newItem, calcTotal, renderEditor, fields }) {
+  const [editingItem, setEditingItem] = useState(null);
+  const [search, setSearch] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  const sorted = [...items].sort((a, b) => b.updatedAt - a.updatedAt);
+  const filtered = search ? sorted.filter((i) => {
+    const q = search.toLowerCase();
+    return fields.some(f => (i[f.key] || "").toLowerCase().includes(q));
+  }) : sorted;
+
+  const createItem = () => {
+    const item = newItem();
+    onSave([item, ...items]);
+    setEditingItem(item);
+  };
+
+  const updateItem = (patch) => {
+    const updated = { ...editingItem, ...patch, updatedAt: Date.now() };
+    setEditingItem(updated);
+    onSave(items.map((i) => i.id === updated.id ? updated : i));
+  };
+
+  const deleteItem = (id) => {
+    onSave(items.filter((i) => i.id !== id));
+    if (editingItem?.id === id) setEditingItem(null);
+    setConfirmDeleteId(null);
+  };
+
+  const duplicateItem = (item) => {
+    const copy = { ...item, id: uid(), name: (item.name || "Báo giá") + " (bản sao)", createdAt: Date.now(), updatedAt: Date.now() };
+    onSave([copy, ...items]);
+  };
+
+  return (
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      {/* Left panel — danh sách */}
+      <div style={{ width: 320, borderRight: `1px solid ${PALETTE.border}`, display: "flex", flexDirection: "column", background: PALETTE.surface }}>
+        {/* Header */}
+        <div style={{ padding: "18px 16px 12px", borderBottom: `1px solid ${PALETTE.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 8, background: color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon size={16} color="white" />
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: PALETTE.ink }}>{title}</div>
+                <div style={{ fontSize: 11, color: PALETTE.textMuted }}>{items.length} báo giá</div>
+              </div>
+            </div>
+            <button className="ta-btn ta-btn-primary" style={{ padding: "6px 12px", fontSize: 12 }} onClick={createItem}>
+              <Plus size={13} /> Tạo mới
+            </button>
+          </div>
+          <div style={{ position: "relative" }}>
+            <Search size={14} color={PALETTE.textFaint} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+            <input className="ta-input" placeholder="Tìm kiếm..." value={search} onChange={(e) => setSearch(e.target.value)}
+              style={{ paddingLeft: 32, padding: "7px 10px 7px 32px", fontSize: 12.5 }} />
+          </div>
+        </div>
+
+        {/* List */}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center" }}>
+              <Icon size={28} color={PALETTE.textFaint} style={{ margin: "0 auto 10px", display: "block" }} />
+              <div style={{ fontSize: 13, color: PALETTE.textMuted, fontWeight: 600 }}>Chưa có báo giá nào</div>
+              <div style={{ fontSize: 12, color: PALETTE.textFaint, marginTop: 4 }}>Bấm "Tạo mới" để bắt đầu</div>
+            </div>
+          ) : (
+            filtered.map((item) => {
+              const total = calcTotal(item);
+              const active = editingItem?.id === item.id;
+              return (
+                <div key={item.id}
+                  onClick={() => setEditingItem(item)}
+                  style={{ padding: "12px 14px", cursor: "pointer", borderBottom: `1px solid ${PALETTE.border}`, background: active ? `${color}12` : "transparent", borderLeft: active ? `3px solid ${color}` : "3px solid transparent", transition: "all .12s" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: PALETTE.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.name || "Chưa đặt tên"}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item[fields[1]?.key] || "—"}
+                        {item[fields[2]?.key] ? ` · ${item[fields[2].key]}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: color }}>{formatVND(total)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+                    <button className="ta-btn ta-btn-ghost" style={{ flex: 1, justifyContent: "center", padding: "3px 6px", fontSize: 11 }} onClick={() => duplicateItem(item)}>
+                      <Copy size={11} /> Copy
+                    </button>
+                    {confirmDeleteId === item.id ? (
+                      <button className="ta-btn" style={{ flex: 1, justifyContent: "center", padding: "3px 6px", fontSize: 11, background: PALETTE.danger, color: "white" }}
+                        onClick={() => deleteItem(item.id)}>
+                        <Check size={11} /> Xác nhận
+                      </button>
+                    ) : (
+                      <button className="ta-btn ta-btn-danger" style={{ flex: 1, justifyContent: "center", padding: "3px 6px", fontSize: 11 }}
+                        onClick={() => setConfirmDeleteId(item.id)}>
+                        <Trash2 size={11} /> Xoá
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Right panel — editor */}
+      <div style={{ flex: 1, overflow: "auto", background: PALETTE.bg }}>
+        {editingItem ? (
+          renderEditor(editingItem, updateItem, () => setEditingItem(null))
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 12, color: PALETTE.textMuted }}>
+            <Icon size={36} color={PALETTE.textFaint} />
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Chọn một báo giá để chỉnh sửa</div>
+            <div style={{ fontSize: 12, color: PALETTE.textFaint }}>hoặc bấm "Tạo mới" để bắt đầu</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   TICKET EDITOR — Báo giá vé tham quan
+   ============================================================ */
+
+function TicketEditor({ item, onChange, onClose }) {
+  const total = ticketTotal(item);
+  const set = (k, v) => onChange({ [k]: v });
+  const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i => i.id===id ? {...i,...patch} : i) });
+  const addItem = () => onChange({ items: [...(item.items||[]), newTicketItem()] });
+  const removeItem = (id) => onChange({ items: (item.items||[]).filter(i => i.id!==id) });
+
+  return (
+    <div style={{ padding: 24, maxWidth: 760 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Ticket size={18} color="white" />
+        </div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: PALETTE.ink }}>Báo giá Vé tham quan</h2>
+      </div>
+
+      {/* Thông tin chung */}
+      <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Tên báo giá" span={2}><input className="ta-input" placeholder="VD: Vé VinWonders Phú Quốc - Đoàn ABC" value={item.name||""} onChange={e=>set("name",e.target.value)}/></Field>
+          <Field label="Địa điểm / Điểm tham quan"><input className="ta-input" placeholder="VD: VinWonders Phú Quốc" value={item.destination||""} onChange={e=>set("destination",e.target.value)}/></Field>
+          <Field label="Ngày tham quan"><input className="ta-input" type="date" value={item.visitDate||""} onChange={e=>set("visitDate",e.target.value)}/></Field>
+          <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
+        </div>
+      </div>
+
+      {/* Bảng vé */}
+      <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 120px 70px 100px 26px", gap: 8, padding: "9px 16px", background: "#7C3AED", fontSize: 11, fontWeight: 700, color: "white" }}>
+          <div>LOẠI VÉ</div><div style={{textAlign:"right"}}>ĐƠN GIÁ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
+        </div>
+        {(item.items||[]).map((ti) => (
+          <div key={ti.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 120px 70px 100px 26px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <input className="ta-input" placeholder="Tên loại vé" value={ti.name||""} onChange={e=>setItem(ti.id,{name:e.target.value})} style={{padding:"5px 9px",fontSize:13}}/>
+              <select className="ta-select" value={ti.type||"Người lớn"} onChange={e=>setItem(ti.id,{type:e.target.value})} style={{padding:"4px 8px",fontSize:11.5}}>
+                {["Người lớn","Trẻ em","Người cao tuổi","Miễn phí"].map(t=><option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <input className="ta-input" inputMode="numeric" value={ti.unitPrice?Number(ti.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ti.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 9px",fontSize:13,textAlign:"right"}}/>
+            <input className="ta-input" type="number" min={0} value={ti.qty||1} onChange={e=>setItem(ti.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 9px",fontSize:13,textAlign:"right"}}/>
+            <div style={{fontSize:13,fontWeight:600,color:"#7C3AED",textAlign:"right"}}>{formatVND((Number(ti.unitPrice)||0)*(Number(ti.qty)||0))}</div>
+            <button onClick={()=>removeItem(ti.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+          </div>
+        ))}
+        <div style={{padding:"8px 14px"}}>
+          <button className="ta-btn ta-btn-ghost" style={{padding:"4px 10px",fontSize:12}} onClick={addItem}><Plus size={12}/> Thêm loại vé</button>
+        </div>
+      </div>
+
+      {/* Tổng */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div className="ta-card" style={{ padding: "14px 20px", minWidth: 240 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800, color: "#7C3AED" }}>
+            <span>TỔNG TIỀN VÉ</span><span>{formatVND(total)}</span>
+          </div>
+          {item.pax > 0 && <div style={{ fontSize: 11.5, color: PALETTE.textMuted, marginTop: 4, textAlign: "right" }}>= {formatVND(total/item.pax)} / khách</div>}
+        </div>
+      </div>
+
+      <div style={{marginTop:14}}>
+        <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều kiện vé, hạn sử dụng..."/></Field>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   HOTEL EDITOR — Báo giá phòng khách sạn
+   ============================================================ */
+
+const BOARD_OPTIONS = [
+  { v: "RO", l: "RO - Room Only" }, { v: "BB", l: "BB - Bed & Breakfast" },
+  { v: "HB", l: "HB - Half Board" }, { v: "FB", l: "FB - Full Board" }, { v: "AI", l: "AI - All Inclusive" },
+];
+
+function HotelEditor({ item, onChange, onClose }) {
+  const subTotal = (item.items||[]).reduce((s,i)=>s+(Number(i.unitPrice)||0)*(Number(i.qty)||0)*(Number(i.nights)||1),0);
+  const tax = item.includeTax ? subTotal * (Number(item.taxPercent)||0)/100 : 0;
+  const total = subTotal + tax;
+  const set = (k, v) => onChange({ [k]: v });
+  const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i=>i.id===id?{...i,...patch}:i) });
+  const addItem = () => onChange({ items: [...(item.items||[]), newRoomItem()] });
+  const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
+
+  return (
+    <div style={{ padding: 24, maxWidth: 860 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#0369A1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Building2 size={18} color="white" />
+        </div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Phòng khách sạn</h2>
+      </div>
+
+      <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Tên báo giá" span={2}><input className="ta-input" placeholder="VD: Phòng KS Intercontinental Đà Nẵng" value={item.name||""} onChange={e=>set("name",e.target.value)}/></Field>
+          <Field label="Tên khách sạn"><input className="ta-input" placeholder="VD: InterContinental Danang" value={item.hotelName||""} onChange={e=>set("hotelName",e.target.value)}/></Field>
+          <Field label="Địa điểm"><input className="ta-input" placeholder="VD: Đà Nẵng" value={item.location||""} onChange={e=>set("location",e.target.value)}/></Field>
+          <Field label="Ngày Check-in"><input className="ta-input" type="date" value={item.checkIn||""} onChange={e=>set("checkIn",e.target.value)}/></Field>
+          <Field label="Ngày Check-out"><input className="ta-input" type="date" value={item.checkOut||""} onChange={e=>set("checkOut",e.target.value)}/></Field>
+          <Field label="Số đêm"><input className="ta-input" type="number" min={1} value={item.nights||1} onChange={e=>set("nights",parseInt(e.target.value)||1)}/></Field>
+          <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
+        </div>
+      </div>
+
+      <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 100px 50px 50px 120px 70px 100px 26px", gap: 6, padding: "9px 14px", background: "#0369A1", fontSize: 10.5, fontWeight: 700, color: "white" }}>
+          <div>LOẠI PHÒNG</div><div>DỊCH VỤ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>ĐÊM</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/ĐÊM</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div style={{textAlign:"right"}}>Board</div><div/>
+        </div>
+        {(item.items||[]).map((ri) => {
+          const lineTotal = (Number(ri.unitPrice)||0)*(Number(ri.qty)||0)*(Number(ri.nights)||1);
+          return (
+            <div key={ri.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 100px 50px 50px 120px 70px 100px 26px", gap: 6, padding: "7px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"center" }}>
+              <input className="ta-input" placeholder="VD: Deluxe Sea View" value={ri.roomType||""} onChange={e=>setItem(ri.id,{roomType:e.target.value})} style={{padding:"5px 8px",fontSize:12.5}}/>
+              <input className="ta-input" placeholder="VD: KS" value={ri.service||""} onChange={e=>setItem(ri.id,{service:e.target.value})} style={{padding:"5px 8px",fontSize:12}}/>
+              <input className="ta-input" type="number" min={1} value={ri.qty||1} onChange={e=>setItem(ri.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <input className="ta-input" type="number" min={1} value={ri.nights||item.nights||1} onChange={e=>setItem(ri.id,{nights:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <input className="ta-input" inputMode="numeric" value={ri.unitPrice?Number(ri.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ri.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <div style={{fontSize:12.5,fontWeight:600,color:"#0369A1",textAlign:"right"}}>{formatVND(lineTotal)}</div>
+              <select className="ta-select" value={ri.board||"BB"} onChange={e=>setItem(ri.id,{board:e.target.value})} style={{padding:"4px 6px",fontSize:11}}>
+                {BOARD_OPTIONS.map(b=><option key={b.v} value={b.v}>{b.v}</option>)}
+              </select>
+              <button onClick={()=>removeItem(ri.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+            </div>
+          );
+        })}
+        <div style={{padding:"8px 14px"}}>
+          <button className="ta-btn ta-btn-ghost" style={{padding:"4px 10px",fontSize:12}} onClick={addItem}><Plus size={12}/> Thêm loại phòng</button>
+        </div>
+      </div>
+
+      {/* Tax + Tổng */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div className="ta-card" style={{ padding: "12px 16px", flex: 1 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={!!item.includeTax} onChange={e=>set("includeTax",e.target.checked)}/>
+            <span>Tính thuế & phí dịch vụ</span>
+            {item.includeTax && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input className="ta-input" type="number" min={0} max={100} value={item.taxPercent||10} onChange={e=>set("taxPercent",parseNum(e.target.value))} style={{width:54,padding:"4px 6px",fontSize:12}}/>
+                <span style={{fontSize:12}}>%</span>
+              </span>
+            )}
+          </label>
+          {item.includeTax && <div style={{fontSize:11.5,color:PALETTE.textMuted,marginTop:4}}>Thuế: {formatVND(tax)}</div>}
+        </div>
+        <div className="ta-card" style={{ padding: "14px 20px", minWidth: 240 }}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:PALETTE.textMuted,marginBottom:4}}>
+            <span>Subtotal</span><span>{formatVND(subTotal)}</span>
+          </div>
+          {item.includeTax && <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:PALETTE.textMuted,marginBottom:4}}>
+            <span>Thuế ({item.taxPercent||10}%)</span><span>{formatVND(tax)}</span>
+          </div>}
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:800,color:"#0369A1",borderTop:`1px solid ${PALETTE.border}`,paddingTop:8}}>
+            <span>TỔNG CỘNG</span><span>{formatVND(total)}</span>
+          </div>
+          {item.pax>0 && <div style={{fontSize:11.5,color:PALETTE.textMuted,marginTop:3,textAlign:"right"}}>{formatVND(total/item.pax)} / khách</div>}
+        </div>
+      </div>
+
+      <div style={{marginTop:14}}>
+        <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều kiện đặt phòng, chính sách hủy..."/></Field>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   CAR EDITOR — Báo giá xe
+   ============================================================ */
+
+function CarEditor({ item, onChange, onClose }) {
+  const total = carTotal(item);
+  const set = (k, v) => onChange({ [k]: v });
+  const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i=>i.id===id?{...i,...patch}:i) });
+  const addItem = () => onChange({ items: [...(item.items||[]), newCarItem()] });
+  const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
+
+  return (
+    <div style={{ padding: 24, maxWidth: 820 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#B45309", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Bus size={18} color="white" />
+        </div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Xe</h2>
+      </div>
+
+      <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Tên báo giá" span={2}><input className="ta-input" placeholder="VD: Xe đón đoàn Hà Nội - Hạ Long" value={item.name||""} onChange={e=>set("name",e.target.value)}/></Field>
+          <Field label="Điểm đi"><input className="ta-input" placeholder="VD: Hà Nội" value={item.departure||""} onChange={e=>set("departure",e.target.value)}/></Field>
+          <Field label="Điểm đến"><input className="ta-input" placeholder="VD: Hạ Long" value={item.destination||""} onChange={e=>set("destination",e.target.value)}/></Field>
+          <Field label="Ngày bắt đầu"><input className="ta-input" type="date" value={item.startDate||""} onChange={e=>set("startDate",e.target.value)}/></Field>
+          <Field label="Ngày kết thúc"><input className="ta-input" type="date" value={item.endDate||""} onChange={e=>set("endDate",e.target.value)}/></Field>
+          <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
+        </div>
+      </div>
+
+      <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1.2fr 50px 50px 120px 100px 26px", gap: 6, padding: "9px 14px", background: "#B45309", fontSize: 10.5, fontWeight: 700, color: "white" }}>
+          <div>LOẠI XE</div><div>TUYẾN ĐƯỜNG</div><div style={{textAlign:"right"}}>SL XE</div><div style={{textAlign:"right"}}>NGÀY</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/NGÀY</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
+        </div>
+        {(item.items||[]).map((ci) => {
+          const lineTotal = (Number(ci.unitPrice)||0)*(Number(ci.qty)||0)*(Number(ci.days)||1);
+          return (
+            <div key={ci.id} style={{ display: "grid", gridTemplateColumns: "1.3fr 1.2fr 50px 50px 120px 100px 26px", gap: 6, padding: "7px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"center" }}>
+              <select className="ta-select" value={ci.vehicleType||"Xe 16 chỗ"} onChange={e=>setItem(ci.id,{vehicleType:e.target.value})} style={{padding:"5px 8px",fontSize:12.5}}>
+                {VEHICLE_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
+              <input className="ta-input" placeholder="VD: Hà Nội - Hạ Long khứ hồi" value={ci.route||""} onChange={e=>setItem(ci.id,{route:e.target.value})} style={{padding:"5px 8px",fontSize:12.5}}/>
+              <input className="ta-input" type="number" min={1} value={ci.qty||1} onChange={e=>setItem(ci.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <input className="ta-input" type="number" min={1} value={ci.days||1} onChange={e=>setItem(ci.id,{days:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <input className="ta-input" inputMode="numeric" value={ci.unitPrice?Number(ci.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ci.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
+              <div style={{fontSize:12.5,fontWeight:600,color:"#B45309",textAlign:"right"}}>{formatVND(lineTotal)}</div>
+              <button onClick={()=>removeItem(ci.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+            </div>
+          );
+        })}
+        <div style={{padding:"8px 14px"}}>
+          <button className="ta-btn ta-btn-ghost" style={{padding:"4px 10px",fontSize:12}} onClick={addItem}><Plus size={12}/> Thêm xe</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, alignItems: "center" }}>
+        {item.pax > 0 && <div style={{fontSize:12.5,color:PALETTE.textMuted}}>CP/khách: <strong>{formatVND(total/(item.pax||1))}</strong></div>}
+        <div className="ta-card" style={{ padding: "14px 20px", minWidth: 220 }}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:800,color:"#B45309"}}>
+            <span>TỔNG CHI PHÍ XE</span><span>{formatVND(total)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{marginTop:14}}>
+        <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều khoản thuê xe, phụ phí..."/></Field>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   TOUR LIST (HOME) — giờ dùng trong Dashboard
    ============================================================ */
 
 function TourList({ tours, onOpen, onCreate, onDuplicate, onDelete }) {
