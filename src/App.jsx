@@ -104,18 +104,20 @@ const newTour = () => ({
    ============================================================ */
 
 // --- Vé tham quan ---
-const newTicketItem = () => ({ id: uid(), name: "", type: "Người lớn", unitPrice: 0, qty: 1, note: "" });
+const newTicketItem = () => ({ id: uid(), name: "", type: "Người lớn", unitPrice: 0, qty: 1, note: "", imageUrl: "" });
 const newTicketQuote = () => ({
   id: uid(), name: "", destination: "", visitDate: "", pax: 1,
+  coverImageUrl: "",
   items: [newTicketItem()],
   note: "", agent: {}, company: {},
   createdAt: Date.now(), updatedAt: Date.now(),
 });
 
 // --- Phòng khách sạn ---
-const newRoomItem = () => ({ id: uid(), roomType: "Phòng đôi", nights: 1, qty: 1, unitPrice: 0, board: "BB", note: "" });
+const newRoomItem = () => ({ id: uid(), roomType: "Phòng đôi", nights: 1, qty: 1, unitPrice: 0, board: "BB", note: "", imageUrl: "" });
 const newHotelQuote = () => ({
   id: uid(), name: "", hotelName: "", location: "", checkIn: "", checkOut: "", nights: 1, pax: 1,
+  coverImageUrl: "",
   items: [newRoomItem()],
   taxes: 0, taxPercent: 10, includeTax: false,
   note: "", agent: {}, company: {},
@@ -124,9 +126,10 @@ const newHotelQuote = () => ({
 
 // --- Báo giá xe ---
 const VEHICLE_TYPES = ["Xe 4 chỗ", "Xe 7 chỗ", "Xe 16 chỗ", "Xe 29 chỗ", "Xe 35 chỗ", "Xe 45 chỗ", "Xe buýt"];
-const newCarItem = () => ({ id: uid(), vehicleType: "Xe 16 chỗ", route: "", days: 1, qty: 1, unitPrice: 0, note: "" });
+const newCarItem = () => ({ id: uid(), vehicleType: "Xe 16 chỗ", route: "", days: 1, qty: 1, unitPrice: 0, note: "", imageUrl: "" });
 const newCarQuote = () => ({
   id: uid(), name: "", departure: "", destination: "", startDate: "", endDate: "", pax: 1,
+  coverImageUrl: "",
   items: [newCarItem()],
   note: "", agent: {}, company: {},
   createdAt: Date.now(), updatedAt: Date.now(),
@@ -353,12 +356,25 @@ async function loadApprovalTour(payload, passwordInput) {
   }
 }
 
-// Đọc URL hash — hỗ trợ cả 2 loại link
+// Publish/load cho 3 module báo giá
+async function publishQuote(data) {
+  try { return toBase64Url(JSON.stringify(data)); }
+  catch (e) { console.error("Encode failed", e); return null; }
+}
+async function loadQuote(encoded) {
+  try { return JSON.parse(fromBase64Url(encoded)); }
+  catch (e) { console.error("Decode failed", e); return null; }
+}
+
+// Đọc URL hash — hỗ trợ cả 5 loại link
 function getHashPayload() {
   try {
     const hash = window.location.hash.slice(1);
     if (hash.startsWith("/view/"))    return { type: "client",   data: hash.slice(6) };
     if (hash.startsWith("/approve/")) return { type: "approval", data: hash.slice(9) };
+    if (hash.startsWith("/ticket/"))  return { type: "ticket",   data: hash.slice(8) };
+    if (hash.startsWith("/hotel/"))   return { type: "hotel",    data: hash.slice(7) };
+    if (hash.startsWith("/car/"))     return { type: "car",      data: hash.slice(5) };
     return null;
   } catch { return null; }
 }
@@ -473,6 +489,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [publicTour, setPublicTour] = useState(null);
   const [isPublicMode, setIsPublicMode] = useState(false);
+  const [publicQuote, setPublicQuote] = useState(null); // { type, data } cho ticket/hotel/car
   // Dashboard section
   const [section, setSection] = useState("tours"); // "tours" | "tickets" | "hotels" | "cars"
   // 3 module mới
@@ -514,6 +531,15 @@ export default function App() {
     } else if (payload?.type === "approval") {
       setIsPublicMode(true);
       setPublicTour({ __approvalPayload: payload.data });
+    } else if (payload?.type === "ticket") {
+      setIsPublicMode(true);
+      loadQuote(payload.data).then((d) => setPublicQuote(d ? { type: "ticket", data: d } : "not_found"));
+    } else if (payload?.type === "hotel") {
+      setIsPublicMode(true);
+      loadQuote(payload.data).then((d) => setPublicQuote(d ? { type: "hotel", data: d } : "not_found"));
+    } else if (payload?.type === "car") {
+      setIsPublicMode(true);
+      loadQuote(payload.data).then((d) => setPublicQuote(d ? { type: "car", data: d } : "not_found"));
     } else {
       loadTours().then((t) => setTours(t));
       loadList(STORAGE_TICKETS).then(setTickets);
@@ -549,9 +575,42 @@ export default function App() {
     showToast("Đã xoá tour");
   };
 
-  // Chế độ xem link public
-  if (isPublicMode) {
-    if (!publicTour) {
+  // Chế độ xem link public — ticket/hotel/car
+  if (isPublicMode && publicQuote) {
+    if (publicQuote === "not_found") {
+      return (
+        <div style={styles.loadingScreen}>
+          <GlobalStyle />
+          <Compass size={36} color={PALETTE.textFaint} />
+          <p style={{ color: PALETTE.textMuted, fontSize: 14, marginTop: 12 }}>Không tìm thấy báo giá hoặc link đã hết hạn.</p>
+        </div>
+      );
+    }
+    return (
+      <div style={styles.appShell}>
+        <GlobalStyle />
+        <PublicTourErrorBoundary>
+          {publicQuote.type === "ticket" && <PublicTicketView data={publicQuote.data} />}
+          {publicQuote.type === "hotel"  && <PublicHotelView  data={publicQuote.data} />}
+          {publicQuote.type === "car"    && <PublicCarView    data={publicQuote.data} />}
+        </PublicTourErrorBoundary>
+      </div>
+    );
+  }
+
+  // Đang load publicQuote hoặc publicTour
+  if (isPublicMode && !publicTour && !publicQuote) {
+    return (
+      <div style={styles.loadingScreen}>
+        <GlobalStyle />
+        <div style={styles.loadingSpinner} />
+        <p style={{ color: PALETTE.textMuted, fontSize: 14 }}>Đang tải báo giá...</p>
+      </div>
+    );
+  }
+
+  if (isPublicMode && publicTour) {
+    if (!publicTour || publicTour === "loading") {
       return (
         <div style={styles.loadingScreen}>
           <GlobalStyle />
@@ -560,7 +619,6 @@ export default function App() {
         </div>
       );
     }
-    // Link Sếp — yêu cầu nhập password
     if (publicTour?.__approvalPayload) {
       return (
         <div style={styles.appShell}>
@@ -903,6 +961,111 @@ function GenericQuoteList({ type, title, Icon, color, items, onSave, newItem, ca
 }
 
 /* ============================================================
+   IMAGE INPUT — component dùng chung cho tất cả editor
+   ============================================================ */
+
+function ImageInput({ value, onChange, label = "URL ảnh", height = 120, placeholder = "Dán link ảnh (https://...)" }) {
+  const [focused, setFocused] = useState(false);
+  const hasImage = value && value.trim();
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <div style={{ position: "relative" }}>
+        {/* Preview ảnh */}
+        {hasImage && (
+          <div style={{ position: "relative", marginBottom: 6, borderRadius: 10, overflow: "hidden", height, background: PALETTE.surfaceAlt }}>
+            <img
+              src={value} alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
+            />
+            <div style={{ display: "none", position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, background: PALETTE.surfaceAlt }}>
+              <ImageIcon size={22} color={PALETTE.textFaint} />
+              <span style={{ fontSize: 11, color: PALETTE.textFaint }}>Không tải được ảnh</span>
+            </div>
+            <button
+              onClick={() => onChange("")}
+              style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.55)", border: "none", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        {/* Input URL */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <Camera size={14} color={PALETTE.textFaint} style={{ flexShrink: 0 }} />
+          <input
+            className="ta-input"
+            placeholder={placeholder}
+            value={value || ""}
+            onChange={(e) => onChange(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            style={{ fontSize: 12, padding: "6px 10px" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SHARE QUOTE BUTTON — dùng chung cho Ticket/Hotel/Car
+   ============================================================ */
+
+function ShareQuoteButton({ data, routePrefix, color }) {
+  const [shareLink, setShareLink] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleShare = async () => {
+    setLoading(true);
+    try {
+      const encoded = await publishQuote(data);
+      if (encoded) {
+        const url = `${window.location.origin}${window.location.pathname}#/${routePrefix}/${encoded}`;
+        setShareLink(url);
+        await navigator.clipboard.writeText(url).catch(() => {});
+      }
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <button
+        className="ta-btn"
+        onClick={handleShare}
+        disabled={loading}
+        style={{ background: color, color: "white", padding: "8px 16px", fontSize: 13 }}
+      >
+        <Share2 size={15} /> {loading ? "Đang tạo..." : "Tạo link gửi khách"}
+      </button>
+
+      {shareLink && (
+        <div style={{ marginTop: 10, padding: "10px 14px", background: PALETTE.primaryLight, borderRadius: 10, border: `1px solid ${PALETTE.primary}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Link size={13} color={PALETTE.primary} />
+            <input readOnly value={shareLink}
+              style={{ flex: 1, border: "none", background: "transparent", fontSize: 11.5, color: PALETTE.primaryDark, outline: "none", fontFamily: "'Montserrat',sans-serif" }} />
+            <button className="ta-btn ta-btn-primary" style={{ padding: "4px 10px", fontSize: 11 }}
+              onClick={() => navigator.clipboard.writeText(shareLink).catch(() => {})}>
+              Copy
+            </button>
+            <button onClick={() => setShareLink(null)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint }}>
+              <X size={13} />
+            </button>
+          </div>
+          <div style={{ fontSize: 10.5, color: PALETTE.textMuted, marginTop: 5 }}>
+            ✓ Đã copy · Khách mở link xem báo giá (không cần đăng nhập)
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
    TICKET EDITOR — Báo giá vé tham quan
    ============================================================ */
 
@@ -914,7 +1077,7 @@ function TicketEditor({ item, onChange, onClose }) {
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i => i.id!==id) });
 
   return (
-    <div style={{ padding: 24, maxWidth: 760 }}>
+    <div style={{ padding: 24, maxWidth: 800 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
         <div style={{ width: 36, height: 36, borderRadius: 9, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Ticket size={18} color="white" />
@@ -922,23 +1085,57 @@ function TicketEditor({ item, onChange, onClose }) {
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: PALETTE.ink }}>Báo giá Vé tham quan</h2>
       </div>
 
-      {/* Thông tin chung */}
+      {/* Thông tin chung + ảnh đại diện */}
       <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Tên báo giá" span={2}><input className="ta-input" placeholder="VD: Vé VinWonders Phú Quốc - Đoàn ABC" value={item.name||""} onChange={e=>set("name",e.target.value)}/></Field>
-          <Field label="Địa điểm / Điểm tham quan"><input className="ta-input" placeholder="VD: VinWonders Phú Quốc" value={item.destination||""} onChange={e=>set("destination",e.target.value)}/></Field>
-          <Field label="Ngày tham quan"><input className="ta-input" type="date" value={item.visitDate||""} onChange={e=>set("visitDate",e.target.value)}/></Field>
-          <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
+          <Field label="Tên báo giá" span={2}>
+            <input className="ta-input" placeholder="VD: Vé VinWonders Phú Quốc - Đoàn ABC" value={item.name||""} onChange={e=>set("name",e.target.value)}/>
+          </Field>
+          <Field label="Địa điểm / Khu vui chơi">
+            <input className="ta-input" placeholder="VD: VinWonders Phú Quốc" value={item.destination||""} onChange={e=>set("destination",e.target.value)}/>
+          </Field>
+          <Field label="Ngày tham quan">
+            <input className="ta-input" type="date" value={item.visitDate||""} onChange={e=>set("visitDate",e.target.value)}/>
+          </Field>
+          <Field label="Số lượng khách">
+            <input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/>
+          </Field>
+        </div>
+        {/* Ảnh đại diện khu vui chơi */}
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${PALETTE.border}` }}>
+          <ImageInput
+            label="🏞️ Ảnh đại diện khu vui chơi / điểm tham quan"
+            value={item.coverImageUrl || ""}
+            onChange={(v) => set("coverImageUrl", v)}
+            height={140}
+            placeholder="Dán link ảnh khu vui chơi (https://...)"
+          />
         </div>
       </div>
 
-      {/* Bảng vé */}
+      {/* Bảng vé — thêm cột ảnh */}
       <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 120px 70px 100px 26px", gap: 8, padding: "9px 16px", background: "#7C3AED", fontSize: 11, fontWeight: 700, color: "white" }}>
-          <div>LOẠI VÉ</div><div style={{textAlign:"right"}}>ĐƠN GIÁ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
+        <div style={{ display: "grid", gridTemplateColumns: "80px 1.5fr 120px 70px 100px 26px", gap: 8, padding: "9px 16px", background: "#7C3AED", fontSize: 11, fontWeight: 700, color: "white" }}>
+          <div>ẢNH VÉ</div><div>LOẠI VÉ</div><div style={{textAlign:"right"}}>ĐƠN GIÁ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
         </div>
         {(item.items||[]).map((ti) => (
-          <div key={ti.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 120px 70px 100px 26px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "center" }}>
+          <div key={ti.id} style={{ display: "grid", gridTemplateColumns: "80px 1.5fr 120px 70px 100px 26px", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "start" }}>
+            {/* Ảnh loại vé */}
+            <div>
+              <div style={{ width: 72, height: 52, borderRadius: 8, overflow: "hidden", background: PALETTE.surfaceAlt, border: `1px solid ${PALETTE.border}`, marginBottom: 4, position: "relative" }}>
+                {ti.imageUrl ? (
+                  <img src={ti.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    onError={(e) => { e.target.style.display = "none"; }}/>
+                ) : (
+                  <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Camera size={16} color={PALETTE.textFaint} />
+                  </div>
+                )}
+              </div>
+              <input className="ta-input" placeholder="URL ảnh" value={ti.imageUrl||""} onChange={e=>setItem(ti.id,{imageUrl:e.target.value})}
+                style={{ padding: "3px 6px", fontSize: 10, width: "100%" }}/>
+            </div>
+            {/* Tên + loại */}
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <input className="ta-input" placeholder="Tên loại vé" value={ti.name||""} onChange={e=>setItem(ti.id,{name:e.target.value})} style={{padding:"5px 9px",fontSize:13}}/>
               <select className="ta-select" value={ti.type||"Người lớn"} onChange={e=>setItem(ti.id,{type:e.target.value})} style={{padding:"4px 8px",fontSize:11.5}}>
@@ -947,8 +1144,8 @@ function TicketEditor({ item, onChange, onClose }) {
             </div>
             <input className="ta-input" inputMode="numeric" value={ti.unitPrice?Number(ti.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ti.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 9px",fontSize:13,textAlign:"right"}}/>
             <input className="ta-input" type="number" min={0} value={ti.qty||1} onChange={e=>setItem(ti.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 9px",fontSize:13,textAlign:"right"}}/>
-            <div style={{fontSize:13,fontWeight:600,color:"#7C3AED",textAlign:"right"}}>{formatVND((Number(ti.unitPrice)||0)*(Number(ti.qty)||0))}</div>
-            <button onClick={()=>removeItem(ti.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+            <div style={{fontSize:13,fontWeight:600,color:"#7C3AED",textAlign:"right",paddingTop:4}}>{formatVND((Number(ti.unitPrice)||0)*(Number(ti.qty)||0))}</div>
+            <button onClick={()=>removeItem(ti.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint,paddingTop:4}}><X size={14}/></button>
           </div>
         ))}
         <div style={{padding:"8px 14px"}}>
@@ -968,6 +1165,10 @@ function TicketEditor({ item, onChange, onClose }) {
 
       <div style={{marginTop:14}}>
         <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều kiện vé, hạn sử dụng..."/></Field>
+      </div>
+
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${PALETTE.border}` }}>
+        <ShareQuoteButton data={item} routePrefix="ticket" color="#7C3AED" />
       </div>
     </div>
   );
@@ -992,7 +1193,7 @@ function HotelEditor({ item, onChange, onClose }) {
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
 
   return (
-    <div style={{ padding: 24, maxWidth: 860 }}>
+    <div style={{ padding: 24, maxWidth: 900 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
         <div style={{ width: 36, height: 36, borderRadius: 9, background: "#0369A1", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Building2 size={18} color="white" />
@@ -1000,8 +1201,9 @@ function HotelEditor({ item, onChange, onClose }) {
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Phòng khách sạn</h2>
       </div>
 
+      {/* Thông tin chung */}
       <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
           <Field label="Tên báo giá" span={2}><input className="ta-input" placeholder="VD: Phòng KS Intercontinental Đà Nẵng" value={item.name||""} onChange={e=>set("name",e.target.value)}/></Field>
           <Field label="Tên khách sạn"><input className="ta-input" placeholder="VD: InterContinental Danang" value={item.hotelName||""} onChange={e=>set("hotelName",e.target.value)}/></Field>
           <Field label="Địa điểm"><input className="ta-input" placeholder="VD: Đà Nẵng" value={item.location||""} onChange={e=>set("location",e.target.value)}/></Field>
@@ -1010,26 +1212,52 @@ function HotelEditor({ item, onChange, onClose }) {
           <Field label="Số đêm"><input className="ta-input" type="number" min={1} value={item.nights||1} onChange={e=>set("nights",parseInt(e.target.value)||1)}/></Field>
           <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
         </div>
+        {/* Ảnh đại diện khách sạn */}
+        <div style={{ paddingTop: 14, borderTop: `1px solid ${PALETTE.border}` }}>
+          <ImageInput
+            label="🏨 Ảnh đại diện khách sạn"
+            value={item.coverImageUrl || ""}
+            onChange={(v) => set("coverImageUrl", v)}
+            height={150}
+            placeholder="Dán link ảnh khách sạn (https://...)"
+          />
+        </div>
       </div>
 
+      {/* Bảng phòng — thêm cột ảnh phòng */}
       <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 100px 50px 50px 120px 70px 100px 26px", gap: 6, padding: "9px 14px", background: "#0369A1", fontSize: 10.5, fontWeight: 700, color: "white" }}>
-          <div>LOẠI PHÒNG</div><div>DỊCH VỤ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>ĐÊM</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/ĐÊM</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div style={{textAlign:"right"}}>Board</div><div/>
+        <div style={{ display: "grid", gridTemplateColumns: "88px 1.2fr 90px 50px 50px 120px 70px 70px 26px", gap: 6, padding: "9px 14px", background: "#0369A1", fontSize: 10, fontWeight: 700, color: "white" }}>
+          <div>ẢNH PHÒNG</div><div>LOẠI PHÒNG</div><div>DỊCH VỤ</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>ĐÊM</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/ĐÊM</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div>BOARD</div><div/>
         </div>
         {(item.items||[]).map((ri) => {
           const lineTotal = (Number(ri.unitPrice)||0)*(Number(ri.qty)||0)*(Number(ri.nights)||1);
           return (
-            <div key={ri.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 100px 50px 50px 120px 70px 100px 26px", gap: 6, padding: "7px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"center" }}>
+            <div key={ri.id} style={{ display: "grid", gridTemplateColumns: "88px 1.2fr 90px 50px 50px 120px 70px 70px 26px", gap: 6, padding: "10px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"start" }}>
+              {/* Ảnh loại phòng */}
+              <div>
+                <div style={{ width: 80, height: 56, borderRadius: 8, overflow: "hidden", background: PALETTE.surfaceAlt, border: `1px solid ${PALETTE.border}`, marginBottom: 4 }}>
+                  {ri.imageUrl ? (
+                    <img src={ri.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={(e) => { e.target.style.display = "none"; }}/>
+                  ) : (
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Camera size={16} color={PALETTE.textFaint} />
+                    </div>
+                  )}
+                </div>
+                <input className="ta-input" placeholder="URL ảnh" value={ri.imageUrl||""} onChange={e=>setItem(ri.id,{imageUrl:e.target.value})}
+                  style={{ padding: "3px 5px", fontSize: 9.5, width: "100%" }}/>
+              </div>
               <input className="ta-input" placeholder="VD: Deluxe Sea View" value={ri.roomType||""} onChange={e=>setItem(ri.id,{roomType:e.target.value})} style={{padding:"5px 8px",fontSize:12.5}}/>
               <input className="ta-input" placeholder="VD: KS" value={ri.service||""} onChange={e=>setItem(ri.id,{service:e.target.value})} style={{padding:"5px 8px",fontSize:12}}/>
               <input className="ta-input" type="number" min={1} value={ri.qty||1} onChange={e=>setItem(ri.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
               <input className="ta-input" type="number" min={1} value={ri.nights||item.nights||1} onChange={e=>setItem(ri.id,{nights:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
               <input className="ta-input" inputMode="numeric" value={ri.unitPrice?Number(ri.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ri.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
-              <div style={{fontSize:12.5,fontWeight:600,color:"#0369A1",textAlign:"right"}}>{formatVND(lineTotal)}</div>
+              <div style={{fontSize:12.5,fontWeight:600,color:"#0369A1",textAlign:"right",paddingTop:4}}>{formatVND(lineTotal)}</div>
               <select className="ta-select" value={ri.board||"BB"} onChange={e=>setItem(ri.id,{board:e.target.value})} style={{padding:"4px 6px",fontSize:11}}>
                 {BOARD_OPTIONS.map(b=><option key={b.v} value={b.v}>{b.v}</option>)}
               </select>
-              <button onClick={()=>removeItem(ri.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+              <button onClick={()=>removeItem(ri.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint,paddingTop:4}}><X size={14}/></button>
             </div>
           );
         })}
@@ -1070,6 +1298,10 @@ function HotelEditor({ item, onChange, onClose }) {
       <div style={{marginTop:14}}>
         <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều kiện đặt phòng, chính sách hủy..."/></Field>
       </div>
+
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${PALETTE.border}` }}>
+        <ShareQuoteButton data={item} routePrefix="hotel" color="#0369A1" />
+      </div>
     </div>
   );
 }
@@ -1103,16 +1335,39 @@ function CarEditor({ item, onChange, onClose }) {
           <Field label="Ngày kết thúc"><input className="ta-input" type="date" value={item.endDate||""} onChange={e=>set("endDate",e.target.value)}/></Field>
           <Field label="Số lượng khách"><input className="ta-input" type="number" min={1} value={item.pax||1} onChange={e=>set("pax",parseInt(e.target.value)||1)}/></Field>
         </div>
+        {/* Ảnh đại diện */}
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${PALETTE.border}` }}>
+          <ImageInput
+            label="🚌 Ảnh đại diện tuyến xe / phương tiện"
+            value={item.coverImageUrl || ""}
+            onChange={(v) => set("coverImageUrl", v)}
+            height={140}
+            placeholder="Dán link ảnh xe / tuyến đường (https://...)"
+          />
+        </div>
       </div>
 
       <div className="ta-card" style={{ overflow: "hidden", marginBottom: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1.2fr 50px 50px 120px 100px 26px", gap: 6, padding: "9px 14px", background: "#B45309", fontSize: 10.5, fontWeight: 700, color: "white" }}>
-          <div>LOẠI XE</div><div>TUYẾN ĐƯỜNG</div><div style={{textAlign:"right"}}>SL XE</div><div style={{textAlign:"right"}}>NGÀY</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/NGÀY</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
+        <div style={{ display: "grid", gridTemplateColumns: "88px 1.1fr 1fr 50px 50px 120px 100px 26px", gap: 6, padding: "9px 14px", background: "#B45309", fontSize: 10.5, fontWeight: 700, color: "white" }}>
+          <div>ẢNH XE</div><div>LOẠI XE</div><div>TUYẾN ĐƯỜNG</div><div style={{textAlign:"right"}}>SL</div><div style={{textAlign:"right"}}>NGÀY</div><div style={{textAlign:"right"}}>ĐƠN GIÁ/NGÀY</div><div style={{textAlign:"right"}}>THÀNH TIỀN</div><div/>
         </div>
         {(item.items||[]).map((ci) => {
           const lineTotal = (Number(ci.unitPrice)||0)*(Number(ci.qty)||0)*(Number(ci.days)||1);
           return (
-            <div key={ci.id} style={{ display: "grid", gridTemplateColumns: "1.3fr 1.2fr 50px 50px 120px 100px 26px", gap: 6, padding: "7px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"center" }}>
+            <div key={ci.id} style={{ display: "grid", gridTemplateColumns: "88px 1.1fr 1fr 50px 50px 120px 100px 26px", gap: 6, padding: "10px 14px", borderBottom:`1px solid ${PALETTE.border}`, alignItems:"start" }}>
+              {/* Ảnh loại xe */}
+              <div>
+                <div style={{ width: 80, height: 56, borderRadius: 8, overflow: "hidden", background: PALETTE.surfaceAlt, border: `1px solid ${PALETTE.border}`, marginBottom: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {ci.imageUrl ? (
+                    <img src={ci.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={(e) => { e.target.style.display = "none"; }}/>
+                  ) : (
+                    <Bus size={20} color={PALETTE.textFaint} />
+                  )}
+                </div>
+                <input className="ta-input" placeholder="URL ảnh xe" value={ci.imageUrl||""} onChange={e=>setItem(ci.id,{imageUrl:e.target.value})}
+                  style={{ padding: "3px 5px", fontSize: 9.5, width: "100%" }}/>
+              </div>
               <select className="ta-select" value={ci.vehicleType||"Xe 16 chỗ"} onChange={e=>setItem(ci.id,{vehicleType:e.target.value})} style={{padding:"5px 8px",fontSize:12.5}}>
                 {VEHICLE_TYPES.map(t=><option key={t}>{t}</option>)}
               </select>
@@ -1120,8 +1375,8 @@ function CarEditor({ item, onChange, onClose }) {
               <input className="ta-input" type="number" min={1} value={ci.qty||1} onChange={e=>setItem(ci.id,{qty:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
               <input className="ta-input" type="number" min={1} value={ci.days||1} onChange={e=>setItem(ci.id,{days:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
               <input className="ta-input" inputMode="numeric" value={ci.unitPrice?Number(ci.unitPrice).toLocaleString("en-US"):""} onChange={e=>setItem(ci.id,{unitPrice:parseNum(e.target.value)})} style={{padding:"5px 8px",fontSize:12,textAlign:"right"}}/>
-              <div style={{fontSize:12.5,fontWeight:600,color:"#B45309",textAlign:"right"}}>{formatVND(lineTotal)}</div>
-              <button onClick={()=>removeItem(ci.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint}}><X size={14}/></button>
+              <div style={{fontSize:12.5,fontWeight:600,color:"#B45309",textAlign:"right",paddingTop:4}}>{formatVND(lineTotal)}</div>
+              <button onClick={()=>removeItem(ci.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint,paddingTop:4}}><X size={14}/></button>
             </div>
           );
         })}
@@ -1142,9 +1397,14 @@ function CarEditor({ item, onChange, onClose }) {
       <div style={{marginTop:14}}>
         <Field label="Ghi chú"><textarea className="ta-textarea" rows={2} value={item.note||""} onChange={e=>set("note",e.target.value)} placeholder="Điều khoản thuê xe, phụ phí..."/></Field>
       </div>
+
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${PALETTE.border}` }}>
+        <ShareQuoteButton data={item} routePrefix="car" color="#B45309" />
+      </div>
     </div>
   );
 }
+
 
 /* ============================================================
    TOUR LIST (HOME) — giờ dùng trong Dashboard
@@ -2675,6 +2935,266 @@ class PublicTourErrorBoundary extends React.Component {
     }
     return this.props.children;
   }
+}
+
+/* ============================================================
+   PUBLIC VIEWS — Ticket / Hotel / Car
+   ============================================================ */
+
+// Shared topbar cho public views
+function PublicTopBar({ color, icon: Icon, title, onPrint }) {
+  return (
+    <div style={{ background: color, padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon size={17} color="white" />
+        </div>
+        <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>{title}</span>
+      </div>
+      <button className="ta-btn" onClick={onPrint}
+        style={{ background: "rgba(255,255,255,0.2)", color: "white", border: "none", padding: "6px 14px", fontSize: 12 }}>
+        <Printer size={13} /> In / PDF
+      </button>
+    </div>
+  );
+}
+
+function PublicQuoteHeader({ color, label, name, subtitle, coverImageUrl, metaItems }) {
+  return (
+    <>
+      {coverImageUrl && (
+        <div style={{ height: 200, borderRadius: 14, overflow: "hidden", marginBottom: 20, background: `url(${coverImageUrl}) center/cover` }} />
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20, background: `${color}18`, color }}>{label}</span>
+      </div>
+      <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 6px", color: PALETTE.ink }}>{name || "Báo giá"}</h1>
+      {subtitle && <div style={{ fontSize: 14, color: PALETTE.textMuted, marginBottom: 12 }}>{subtitle}</div>}
+      {metaItems && (
+        <div style={{ display: "flex", gap: 16, fontSize: 13, color: PALETTE.textMuted, marginBottom: 24, flexWrap: "wrap" }}>
+          {metaItems.filter(Boolean).map((m, i) => (
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>{m}</span>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---- Báo giá Vé tham quan ---- */
+function PublicTicketView({ data: d }) {
+  const total = ticketTotal(d);
+  const pax = Number(d.pax) || 1;
+  return (
+    <div style={{ minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Montserrat',sans-serif" }}>
+      <PublicTopBar color="#7C3AED" icon={Ticket} title={d.company?.name || "Báo giá Vé tham quan"} onPrint={() => window.print()} />
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: "28px 24px 80px" }}>
+        <PublicQuoteHeader
+          color="#7C3AED" label="BÁO GIÁ VÉ THAM QUAN"
+          name={d.name} subtitle={d.destination}
+          coverImageUrl={d.coverImageUrl}
+          metaItems={[
+            d.visitDate && <><Calendar size={14}/> Ngày tham quan: {d.visitDate}</>,
+            <><Users size={14}/> {pax} khách</>,
+          ]}
+        />
+
+        {/* Bảng vé */}
+        <div className="ta-card" style={{ overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 80px 60px 110px", gap: 0, background: "#7C3AED", fontSize: 11, fontWeight: 700, color: "white" }}>
+            {["", "LOẠI VÉ", "ĐƠN GIÁ", "SL", "THÀNH TIỀN"].map((h, i) => (
+              <div key={i} style={{ padding: "9px 12px", textAlign: i >= 2 ? "right" : "left" }}>{h}</div>
+            ))}
+          </div>
+          {(d.items || []).map((ti, idx) => (
+            <div key={ti.id || idx} style={{ display: "grid", gridTemplateColumns: "70px 1fr 80px 60px 110px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "center" }}>
+              <div style={{ padding: "10px 12px" }}>
+                {ti.imageUrl ? (
+                  <img src={ti.imageUrl} alt="" style={{ width: 52, height: 38, objectFit: "cover", borderRadius: 6 }}
+                    onError={(e) => { e.target.style.display = "none"; }} />
+                ) : (
+                  <div style={{ width: 52, height: 38, borderRadius: 6, background: PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Ticket size={16} color={PALETTE.textFaint} />
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: "10px 12px" }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{ti.name || "—"}</div>
+                <div style={{ fontSize: 11, color: PALETTE.textMuted, marginTop: 2 }}>{ti.type}</div>
+              </div>
+              <div style={{ padding: "10px 12px", textAlign: "right", fontSize: 13 }}>{formatVND(ti.unitPrice)}</div>
+              <div style={{ padding: "10px 12px", textAlign: "right", fontSize: 13 }}>{ti.qty}</div>
+              <div style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, fontWeight: 700, color: "#7C3AED" }}>{formatVND((Number(ti.unitPrice)||0)*(Number(ti.qty)||0))}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ padding: "16px 24px", background: "#7C3AED", borderRadius: 12, minWidth: 260, color: "white" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
+              <span>TỔNG TIỀN VÉ</span><span>{formatVND(total)}</span>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{formatVND(total / pax)} / khách</div>
+          </div>
+        </div>
+
+        {d.note && <div style={{ marginTop: 20, padding: "12px 16px", background: PALETTE.surfaceAlt, borderRadius: 10, fontSize: 13, color: PALETTE.textMuted }}>{d.note}</div>}
+        <AgentBlock tour={d} />
+      </div>
+    </div>
+  );
+}
+
+/* ---- Báo giá Phòng khách sạn ---- */
+function PublicHotelView({ data: d }) {
+  const subTotal = (d.items||[]).reduce((s,i)=>s+(Number(i.unitPrice)||0)*(Number(i.qty)||0)*(Number(i.nights)||1), 0);
+  const tax = d.includeTax ? subTotal * (Number(d.taxPercent)||0)/100 : 0;
+  const total = subTotal + tax;
+  const pax = Number(d.pax) || 1;
+
+  return (
+    <div style={{ minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Montserrat',sans-serif" }}>
+      <PublicTopBar color="#0369A1" icon={Building2} title={d.company?.name || "Báo giá Phòng khách sạn"} onPrint={() => window.print()} />
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: "28px 24px 80px" }}>
+        <PublicQuoteHeader
+          color="#0369A1" label="BÁO GIÁ PHÒNG KHÁCH SẠN"
+          name={d.name} subtitle={d.hotelName ? `${d.hotelName}${d.location ? ` · ${d.location}` : ""}` : d.location}
+          coverImageUrl={d.coverImageUrl}
+          metaItems={[
+            d.checkIn && <><Calendar size={14}/> Check-in: {d.checkIn}</>,
+            d.checkOut && <><Calendar size={14}/> Check-out: {d.checkOut}</>,
+            d.nights && <><Clock size={14}/> {d.nights} đêm</>,
+            <><Users size={14}/> {pax} khách</>,
+          ]}
+        />
+
+        {/* Bảng phòng */}
+        <div className="ta-card" style={{ overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 70px 50px 50px 110px 60px", background: "#0369A1", fontSize: 10.5, fontWeight: 700, color: "white" }}>
+            {["", "LOẠI PHÒNG", "DỊCH VỤ", "SL", "ĐÊM", "ĐƠN GIÁ/ĐÊM", "TỔNG"].map((h, i) => (
+              <div key={i} style={{ padding: "9px 10px", textAlign: i >= 2 ? "right" : "left" }}>{h}</div>
+            ))}
+          </div>
+          {(d.items||[]).map((ri, idx) => {
+            const lineTotal = (Number(ri.unitPrice)||0)*(Number(ri.qty)||0)*(Number(ri.nights)||1);
+            return (
+              <div key={ri.id||idx} style={{ display: "grid", gridTemplateColumns: "80px 1fr 70px 50px 50px 110px 60px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "center" }}>
+                <div style={{ padding: "10px 10px" }}>
+                  {ri.imageUrl ? (
+                    <img src={ri.imageUrl} alt="" style={{ width: 60, height: 44, objectFit: "cover", borderRadius: 6 }}
+                      onError={(e) => { e.target.style.display = "none"; }} />
+                  ) : (
+                    <div style={{ width: 60, height: 44, borderRadius: 6, background: PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Building2 size={16} color={PALETTE.textFaint} />
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding: "10px 10px" }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{ri.roomType || "—"}</div>
+                  <div style={{ fontSize: 11, color: "#0369A1", fontWeight: 600, marginTop: 2 }}>{ri.board || "BB"}</div>
+                </div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 12 }}>{ri.service || "—"}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{ri.qty}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{ri.nights || d.nights}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{formatVND(ri.unitPrice)}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, fontWeight: 700, color: "#0369A1" }}>{formatVND(lineTotal)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ padding: "16px 24px", background: "#0369A1", borderRadius: 12, minWidth: 280, color: "white" }}>
+            {d.includeTax && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
+                <span>Subtotal</span><span>{formatVND(subTotal)}</span>
+              </div>
+            )}
+            {d.includeTax && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+                <span>Thuế & phí ({d.taxPercent||10}%)</span><span>{formatVND(tax)}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800, borderTop: "1px solid rgba(255,255,255,0.3)", paddingTop: 8 }}>
+              <span>TỔNG CỘNG</span><span>{formatVND(total)}</span>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{formatVND(total / pax)} / khách</div>
+          </div>
+        </div>
+
+        {d.note && <div style={{ marginTop: 20, padding: "12px 16px", background: PALETTE.surfaceAlt, borderRadius: 10, fontSize: 13, color: PALETTE.textMuted }}>{d.note}</div>}
+        <AgentBlock tour={d} />
+      </div>
+    </div>
+  );
+}
+
+/* ---- Báo giá Xe ---- */
+function PublicCarView({ data: d }) {
+  const total = carTotal(d);
+  const pax = Number(d.pax) || 1;
+  return (
+    <div style={{ minHeight: "100vh", background: PALETTE.bg, fontFamily: "'Montserrat',sans-serif" }}>
+      <PublicTopBar color="#B45309" icon={Bus} title={d.company?.name || "Báo giá Xe"} onPrint={() => window.print()} />
+      <div style={{ maxWidth: 820, margin: "0 auto", padding: "28px 24px 80px" }}>
+        <PublicQuoteHeader
+          color="#B45309" label="BÁO GIÁ XE"
+          name={d.name}
+          subtitle={d.departure && d.destination ? `${d.departure} → ${d.destination}` : (d.departure || d.destination)}
+          coverImageUrl={d.coverImageUrl}
+          metaItems={[
+            d.startDate && <><Calendar size={14}/> {d.startDate}</>,
+            d.endDate && d.endDate !== d.startDate && <><Calendar size={14}/> đến {d.endDate}</>,
+            <><Users size={14}/> {pax} khách</>,
+          ]}
+        />
+
+        {/* Bảng xe */}
+        <div className="ta-card" style={{ overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "80px 1.2fr 1fr 50px 50px 120px 110px", background: "#B45309", fontSize: 10.5, fontWeight: 700, color: "white" }}>
+            {["", "LOẠI XE", "TUYẾN ĐƯỜNG", "SL", "NGÀY", "ĐƠN GIÁ/NGÀY", "THÀNH TIỀN"].map((h, i) => (
+              <div key={i} style={{ padding: "9px 10px", textAlign: i >= 3 ? "right" : "left" }}>{h}</div>
+            ))}
+          </div>
+          {(d.items||[]).map((ci, idx) => {
+            const lineTotal = (Number(ci.unitPrice)||0)*(Number(ci.qty)||0)*(Number(ci.days)||1);
+            return (
+              <div key={ci.id||idx} style={{ display: "grid", gridTemplateColumns: "80px 1.2fr 1fr 50px 50px 120px 110px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "center" }}>
+                <div style={{ padding: "10px 10px" }}>
+                  {ci.imageUrl ? (
+                    <img src={ci.imageUrl} alt="" style={{ width: 62, height: 44, objectFit: "cover", borderRadius: 6 }}
+                      onError={(e) => { e.target.style.display = "none"; }} />
+                  ) : (
+                    <div style={{ width: 62, height: 44, borderRadius: 6, background: PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Bus size={16} color={PALETTE.textFaint} />
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding: "10px 10px", fontWeight: 600, fontSize: 13 }}>{ci.vehicleType || "—"}</div>
+                <div style={{ padding: "10px 10px", fontSize: 12.5, color: PALETTE.textMuted }}>{ci.route || "—"}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{ci.qty}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{ci.days}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13 }}>{formatVND(ci.unitPrice)}</div>
+                <div style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, fontWeight: 700, color: "#B45309" }}>{formatVND(lineTotal)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 13, color: PALETTE.textMuted }}>Chi phí / khách: <strong style={{ color: PALETTE.ink }}>{formatVND(total / pax)}</strong></div>
+          <div style={{ padding: "16px 24px", background: "#B45309", borderRadius: 12, minWidth: 240, color: "white" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800 }}>
+              <span>TỔNG CHI PHÍ XE</span><span>{formatVND(total)}</span>
+            </div>
+          </div>
+        </div>
+
+        {d.note && <div style={{ marginTop: 20, padding: "12px 16px", background: PALETTE.surfaceAlt, borderRadius: 10, fontSize: 13, color: PALETTE.textMuted }}>{d.note}</div>}
+        <AgentBlock tour={d} />
+      </div>
+    </div>
+  );
 }
 
 /* ============================================================
