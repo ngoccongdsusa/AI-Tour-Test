@@ -6,6 +6,7 @@ import {
   DollarSign, Share2, Link, Star, CheckCircle, XCircle, Lock,
   LayoutDashboard, Ticket, Building2, Bus, ChevronRight, Search,
   Hash, Tag, Clock, Edit3, BarChart2,
+  Database, BookOpen, Library, Layers, Hotel, Car, ChevronLeft,
 } from "lucide-react";
 
 /* ============================================================
@@ -139,6 +140,43 @@ const newCarQuote = () => ({
 const STORAGE_TICKETS = "baogiatour_tickets_v1";
 const STORAGE_HOTELS  = "baogiatour_hotels_v1";
 const STORAGE_CARS    = "baogiatour_cars_v1";
+
+/* ---- Cơ sở dữ liệu ---- */
+// Địa điểm tham quan → nhiều loại vé
+const newAttractionTicketType = () => ({ id: uid(), name: "Người lớn", price: 0, note: "" });
+const newAttraction = () => ({
+  id: uid(), name: "", location: "", description: "", coverImageUrl: "",
+  ticketTypes: [newAttractionTicketType()],
+  openHours: "", website: "",
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+const STORAGE_DB_ATTRACTIONS = "baogiatour_db_attractions_v1";
+const STORAGE_DB_HOTELS      = "baogiatour_db_hotels_v1";
+const STORAGE_DB_VEHICLES    = "baogiatour_db_vehicles_v1";
+
+// --- DB: Địa điểm tham quan → nhiều loại vé ---
+const newDbTicketType = () => ({ id: uid(), name: "", type: "Người lớn", price: 0, note: "", imageUrl: "" });
+const newDbAttraction = () => ({
+  id: uid(), name: "", location: "", description: "", coverImageUrl: "",
+  ticketTypes: [newDbTicketType()],
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+// --- DB: Khách sạn → nhiều loại phòng ---
+const newDbRoomType = () => ({ id: uid(), roomType: "Deluxe", board: "BB", pricePerNight: 0, note: "", imageUrl: "" });
+const newDbHotel = () => ({
+  id: uid(), name: "", location: "", stars: 4, description: "", coverImageUrl: "", website: "",
+  roomTypes: [newDbRoomType()],
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
+
+// --- DB: Loại xe đơn lẻ ---
+const newDbVehicle = () => ({
+  id: uid(), vehicleType: "Xe 16 chỗ", brand: "", capacity: 16,
+  pricePerDay: 0, note: "", imageUrl: "",
+  createdAt: Date.now(), updatedAt: Date.now(),
+});
 
 async function loadList(key) {
   try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; }
@@ -497,6 +535,10 @@ export default function App() {
   const [hotels,  setHotels]  = useState(null);
   const [cars,    setCars]    = useState(null);
   const [activeItemId, setActiveItemId] = useState(null);
+  // Database state
+  const [dbAttractions, setDbAttractions] = useState(null);
+  const [dbHotels,      setDbHotels]      = useState(null);
+  const [dbVehicles,    setDbVehicles]    = useState(null);
   const saveTimer = useRef(null);
 
   const persist = useCallback((next) => {
@@ -545,6 +587,9 @@ export default function App() {
       loadList(STORAGE_TICKETS).then(setTickets);
       loadList(STORAGE_HOTELS).then(setHotels);
       loadList(STORAGE_CARS).then(setCars);
+      loadList(STORAGE_DB_ATTRACTIONS).then(setDbAttractions);
+      loadList(STORAGE_DB_HOTELS).then(setDbHotels);
+      loadList(STORAGE_DB_VEHICLES).then(setDbVehicles);
     }
   }, []);
 
@@ -655,7 +700,8 @@ export default function App() {
   };
 
   // Chế độ app bình thường
-  if (tours === null || tickets === null || hotels === null || cars === null) {
+  if (tours === null || tickets === null || hotels === null || cars === null
+      || dbAttractions === null || dbHotels === null || dbVehicles === null) {
     return (
       <div style={styles.loadingScreen}>
         <GlobalStyle />
@@ -679,6 +725,12 @@ export default function App() {
           onSaveHotels={(list) => persistList(STORAGE_HOTELS, setHotels, list)}
           cars={cars}
           onSaveCars={(list) => persistList(STORAGE_CARS, setCars, list)}
+          dbAttractions={dbAttractions}
+          onSaveDbAttractions={(list) => persistList(STORAGE_DB_ATTRACTIONS, setDbAttractions, list)}
+          dbHotels={dbHotels}
+          onSaveDbHotels={(list) => persistList(STORAGE_DB_HOTELS, setDbHotels, list)}
+          dbVehicles={dbVehicles}
+          onSaveDbVehicles={(list) => persistList(STORAGE_DB_VEHICLES, setDbVehicles, list)}
         />
       )}
       {view === "edit" && activeTour && (
@@ -703,10 +755,16 @@ export default function App() {
    ============================================================ */
 
 const NAV_ITEMS = [
-  { key: "tours",   label: "Báo giá Tour",        Icon: Compass,   color: "#0F5D52" },
-  { key: "tickets", label: "Báo giá Vé tham quan", Icon: Ticket,    color: "#7C3AED" },
-  { key: "hotels",  label: "Báo giá Phòng KS",     Icon: Building2, color: "#0369A1" },
-  { key: "cars",    label: "Báo giá Xe",            Icon: Bus,       color: "#B45309" },
+  { key: "tours",    label: "Báo giá Tour",        Icon: Compass,   color: "#0F5D52" },
+  { key: "tickets",  label: "Báo giá Vé tham quan", Icon: Ticket,    color: "#7C3AED" },
+  { key: "hotels",   label: "Báo giá Phòng KS",     Icon: Building2, color: "#0369A1" },
+  { key: "cars",     label: "Báo giá Xe",            Icon: Bus,       color: "#B45309" },
+];
+
+const DB_NAV_ITEMS = [
+  { key: "db_attractions", label: "Địa điểm / Vé",   Icon: Ticket,    color: "#7C3AED" },
+  { key: "db_hotels",      label: "Khách sạn",        Icon: Building2, color: "#0369A1" },
+  { key: "db_vehicles",    label: "Loại xe",           Icon: Bus,       color: "#B45309" },
 ];
 
 function Dashboard({
@@ -715,18 +773,27 @@ function Dashboard({
   tickets, onSaveTickets,
   hotels,  onSaveHotels,
   cars,    onSaveCars,
+  dbAttractions, onSaveDbAttractions,
+  dbHotels,      onSaveDbHotels,
+  dbVehicles,    onSaveDbVehicles,
 }) {
+  const isDbSection = section.startsWith("db_");
   const allCounts = {
     tours:   tours.length,
     tickets: tickets.length,
     hotels:  hotels.length,
     cars:    cars.length,
   };
+  const dbCounts = {
+    db_attractions: dbAttractions.length,
+    db_hotels:      dbHotels.length,
+    db_vehicles:    dbVehicles.length,
+  };
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       {/* Sidebar */}
-      <aside style={{ width: 230, background: PALETTE.ink, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}>
+      <aside style={{ width: 230, background: PALETTE.ink, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" }}>
         {/* Logo */}
         <div style={{ padding: "22px 20px 18px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -740,28 +807,46 @@ function Dashboard({
           </div>
         </div>
 
-        {/* Nav */}
         <nav style={{ padding: "12px 10px", flex: 1 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", padding: "4px 10px 8px", textTransform: "uppercase" }}>
-            Modules
-          </div>
+          {/* Báo giá modules */}
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", padding: "4px 10px 8px", textTransform: "uppercase" }}>Báo giá</div>
           {NAV_ITEMS.map(({ key, label, Icon, color }) => {
             const active = section === key;
             return (
               <button key={key} onClick={() => setSection(key)} style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 10px",
                 borderRadius: 9, border: "none", cursor: "pointer", marginBottom: 2, textAlign: "left",
-                background: active ? "rgba(255,255,255,0.1)" : "transparent",
-                transition: "background .15s",
+                background: active ? "rgba(255,255,255,0.1)" : "transparent", transition: "background .15s",
               }}>
                 <div style={{ width: 28, height: 28, borderRadius: 7, background: active ? color : "rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background .15s" }}>
                   <Icon size={15} color={active ? "white" : "rgba(255,255,255,0.4)"} />
                 </div>
-                <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? "white" : "rgba(255,255,255,0.55)", flex: 1, letterSpacing: "-0.01em" }}>
-                  {label}
-                </span>
+                <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? "white" : "rgba(255,255,255,0.55)", flex: 1 }}>{label}</span>
                 <span style={{ fontSize: 11, fontWeight: 600, color: active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", borderRadius: 20, padding: "1px 7px" }}>
-                  {allCounts[key]}
+                  {allCounts[key] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* Cơ sở dữ liệu */}
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", padding: "12px 10px 8px", textTransform: "uppercase", borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 8 }}>
+            Cơ sở dữ liệu
+          </div>
+          {DB_NAV_ITEMS.map(({ key, label, Icon, color }) => {
+            const active = section === key;
+            return (
+              <button key={key} onClick={() => setSection(key)} style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 10px",
+                borderRadius: 9, border: "none", cursor: "pointer", marginBottom: 2, textAlign: "left",
+                background: active ? "rgba(255,255,255,0.1)" : "transparent", transition: "background .15s",
+              }}>
+                <div style={{ width: 28, height: 28, borderRadius: 7, background: active ? color : "rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background .15s" }}>
+                  <Icon size={15} color={active ? "white" : "rgba(255,255,255,0.4)"} />
+                </div>
+                <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? "white" : "rgba(255,255,255,0.55)", flex: 1 }}>{label}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", borderRadius: 20, padding: "1px 7px" }}>
+                  {dbCounts[key] ?? 0}
                 </span>
               </button>
             );
@@ -787,12 +872,8 @@ function Dashboard({
             type="tickets" title="Báo giá Vé tham quan" Icon={Ticket} color="#7C3AED"
             items={tickets} onSave={onSaveTickets}
             newItem={newTicketQuote} calcTotal={ticketTotal}
-            renderEditor={(item, onChange, onClose) => <TicketEditor item={item} onChange={onChange} onClose={onClose} />}
-            fields={[
-              { key: "name", label: "Tên báo giá" },
-              { key: "destination", label: "Địa điểm" },
-              { key: "visitDate", label: "Ngày tham quan" },
-            ]}
+            renderEditor={(item, onChange, onClose) => <TicketEditor item={item} onChange={onChange} onClose={onClose} dbAttractions={dbAttractions} />}
+            fields={[{ key: "name", label: "Tên báo giá" }, { key: "destination", label: "Địa điểm" }, { key: "visitDate", label: "Ngày" }]}
           />
         )}
         {section === "hotels" && (
@@ -800,12 +881,8 @@ function Dashboard({
             type="hotels" title="Báo giá Phòng khách sạn" Icon={Building2} color="#0369A1"
             items={hotels} onSave={onSaveHotels}
             newItem={newHotelQuote} calcTotal={hotelTotal}
-            renderEditor={(item, onChange, onClose) => <HotelEditor item={item} onChange={onChange} onClose={onClose} />}
-            fields={[
-              { key: "name", label: "Tên báo giá" },
-              { key: "hotelName", label: "Khách sạn" },
-              { key: "checkIn", label: "Check-in" },
-            ]}
+            renderEditor={(item, onChange, onClose) => <HotelEditor item={item} onChange={onChange} onClose={onClose} dbHotels={dbHotels} />}
+            fields={[{ key: "name", label: "Tên báo giá" }, { key: "hotelName", label: "Khách sạn" }, { key: "checkIn", label: "Check-in" }]}
           />
         )}
         {section === "cars" && (
@@ -813,13 +890,19 @@ function Dashboard({
             type="cars" title="Báo giá Xe" Icon={Bus} color="#B45309"
             items={cars} onSave={onSaveCars}
             newItem={newCarQuote} calcTotal={carTotal}
-            renderEditor={(item, onChange, onClose) => <CarEditor item={item} onChange={onChange} onClose={onClose} />}
-            fields={[
-              { key: "name", label: "Tên báo giá" },
-              { key: "departure", label: "Điểm đi" },
-              { key: "startDate", label: "Ngày" },
-            ]}
+            renderEditor={(item, onChange, onClose) => <CarEditor item={item} onChange={onChange} onClose={onClose} dbVehicles={dbVehicles} />}
+            fields={[{ key: "name", label: "Tên báo giá" }, { key: "departure", label: "Điểm đi" }, { key: "startDate", label: "Ngày" }]}
           />
+        )}
+        {/* Database sections */}
+        {section === "db_attractions" && (
+          <DbAttractionManager items={dbAttractions} onSave={onSaveDbAttractions} />
+        )}
+        {section === "db_hotels" && (
+          <DbHotelManager items={dbHotels} onSave={onSaveDbHotels} />
+        )}
+        {section === "db_vehicles" && (
+          <DbVehicleManager items={dbVehicles} onSave={onSaveDbVehicles} />
         )}
       </main>
     </div>
@@ -1069,20 +1152,47 @@ function ShareQuoteButton({ data, routePrefix, color }) {
    TICKET EDITOR — Báo giá vé tham quan
    ============================================================ */
 
-function TicketEditor({ item, onChange, onClose }) {
+function TicketEditor({ item, onChange, onClose, dbAttractions }) {
   const total = ticketTotal(item);
   const set = (k, v) => onChange({ [k]: v });
   const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i => i.id===id ? {...i,...patch} : i) });
   const addItem = () => onChange({ items: [...(item.items||[]), newTicketItem()] });
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i => i.id!==id) });
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Import từ CSDL địa điểm
+  const importFromDb = (attraction) => {
+    const importedItems = (attraction.ticketTypes || []).map(t => ({
+      ...newTicketItem(),
+      name: t.name || "",
+      type: t.type || "Người lớn",
+      unitPrice: t.price || 0,
+      imageUrl: t.imageUrl || "",
+      qty: item.pax || 1,
+    }));
+    onChange({
+      destination: attraction.name || item.destination,
+      coverImageUrl: attraction.coverImageUrl || item.coverImageUrl,
+      items: importedItems.length > 0 ? importedItems : item.items,
+    });
+    setShowPicker(false);
+  };
 
   return (
     <div style={{ padding: 24, maxWidth: 800 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Ticket size={18} color="white" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Ticket size={18} color="white" />
+          </div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: PALETTE.ink }}>Báo giá Vé tham quan</h2>
         </div>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: PALETTE.ink }}>Báo giá Vé tham quan</h2>
+        {dbAttractions && dbAttractions.length > 0 && (
+          <button className="ta-btn" onClick={() => setShowPicker(true)}
+            style={{ background: "#7C3AED", color: "white", padding: "7px 14px", fontSize: 12.5 }}>
+            <Folder size={14} /> Chọn từ CSDL
+          </button>
+        )}
       </div>
 
       {/* Thông tin chung + ảnh đại diện */}
@@ -1148,10 +1258,55 @@ function TicketEditor({ item, onChange, onClose }) {
             <button onClick={()=>removeItem(ti.id)} style={{background:"none",border:"none",cursor:"pointer",color:PALETTE.textFaint,paddingTop:4}}><X size={14}/></button>
           </div>
         ))}
-        <div style={{padding:"8px 14px"}}>
+        <div style={{padding:"8px 14px", display:"flex", gap:8}}>
           <button className="ta-btn ta-btn-ghost" style={{padding:"4px 10px",fontSize:12}} onClick={addItem}><Plus size={12}/> Thêm loại vé</button>
+          {dbAttractions && dbAttractions.length > 0 && (
+            <button className="ta-btn ta-btn-ghost" style={{padding:"4px 10px",fontSize:12,color:"#7C3AED",borderColor:"#7C3AED"}} onClick={() => setShowPicker(true)}>
+              <Folder size={12}/> Chọn từ CSDL
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Picker modal */}
+      {showPicker && (
+        <DbPickerModal title="Chọn địa điểm tham quan từ CSDL" color="#7C3AED" Icon={Ticket} onClose={() => setShowPicker(false)}>
+          {(dbAttractions || []).length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>Chưa có địa điểm nào trong CSDL</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {(dbAttractions || []).map(attr => (
+                <div key={attr.id} className="ta-card" style={{ padding: 14, cursor: "pointer", transition: "box-shadow .15s" }}
+                  onClick={() => importFromDb(attr)}
+                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 0 0 2px #7C3AED"}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    {attr.coverImageUrl && (
+                      <img src={attr.coverImageUrl} alt="" style={{ width: 72, height: 52, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
+                        onError={e => { e.target.style.display = "none"; }} />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{attr.name}</div>
+                      {attr.location && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>📍 {attr.location}</div>}
+                      {attr.openHours && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>🕐 {attr.openHours}</div>}
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {(attr.ticketTypes || []).map(t => (
+                          <span key={t.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#7C3AED18", color: "#7C3AED", fontWeight: 600 }}>
+                            {t.name} — {formatVND(t.price)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "#7C3AED", fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>
+                      → Chọn
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DbPickerModal>
+      )}
 
       {/* Tổng */}
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -1183,7 +1338,7 @@ const BOARD_OPTIONS = [
   { v: "HB", l: "HB - Half Board" }, { v: "FB", l: "FB - Full Board" }, { v: "AI", l: "AI - All Inclusive" },
 ];
 
-function HotelEditor({ item, onChange, onClose }) {
+function HotelEditor({ item, onChange, onClose, dbHotels }) {
   const subTotal = (item.items||[]).reduce((s,i)=>s+(Number(i.unitPrice)||0)*(Number(i.qty)||0)*(Number(i.nights)||1),0);
   const tax = item.includeTax ? subTotal * (Number(item.taxPercent)||0)/100 : 0;
   const total = subTotal + tax;
@@ -1191,14 +1346,42 @@ function HotelEditor({ item, onChange, onClose }) {
   const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i=>i.id===id?{...i,...patch}:i) });
   const addItem = () => onChange({ items: [...(item.items||[]), newRoomItem()] });
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
+  const [showPicker, setShowPicker] = useState(false);
+
+  const importFromDb = (hotel) => {
+    const importedItems = (hotel.roomTypes || []).map(r => ({
+      ...newRoomItem(),
+      roomType: r.name || r.roomType || "",
+      unitPrice: r.price || 0,
+      imageUrl: r.imageUrl || "",
+      board: r.board || "BB",
+      qty: 1,
+      nights: item.nights || 1,
+    }));
+    onChange({
+      hotelName: hotel.name || item.hotelName,
+      location: hotel.location || item.location,
+      coverImageUrl: hotel.coverImageUrl || item.coverImageUrl,
+      items: importedItems.length > 0 ? importedItems : item.items,
+    });
+    setShowPicker(false);
+  };
 
   return (
     <div style={{ padding: 24, maxWidth: 900 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#0369A1", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Building2 size={18} color="white" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: "#0369A1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Building2 size={18} color="white" />
+          </div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Phòng khách sạn</h2>
         </div>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Phòng khách sạn</h2>
+        {dbHotels && dbHotels.length > 0 && (
+          <button className="ta-btn" onClick={() => setShowPicker(true)}
+            style={{ background: "#0369A1", color: "white", padding: "7px 14px", fontSize: 12.5 }}>
+            <Folder size={14} /> Chọn từ CSDL
+          </button>
+        )}
       </div>
 
       {/* Thông tin chung */}
@@ -1310,21 +1493,82 @@ function HotelEditor({ item, onChange, onClose }) {
    CAR EDITOR — Báo giá xe
    ============================================================ */
 
-function CarEditor({ item, onChange, onClose }) {
+function CarEditor({ item, onChange, onClose, dbVehicles }) {
   const total = carTotal(item);
   const set = (k, v) => onChange({ [k]: v });
   const setItem = (id, patch) => onChange({ items: (item.items||[]).map(i=>i.id===id?{...i,...patch}:i) });
   const addItem = () => onChange({ items: [...(item.items||[]), newCarItem()] });
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Import từ CSDL xe — thêm xe đã chọn vào bảng
+  const importVehicleFromDb = (vehicle) => {
+    const newItem = {
+      ...newCarItem(),
+      vehicleType: vehicle.vehicleType || "Xe 16 chỗ",
+      unitPrice: vehicle.pricePerDay || 0,
+      imageUrl: vehicle.imageUrl || "",
+      note: vehicle.note || "",
+      qty: 1,
+      days: 1,
+    };
+    onChange({ items: [...(item.items || []), newItem] });
+    setShowPicker(false);
+  };
 
   return (
     <div style={{ padding: 24, maxWidth: 820 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 9, background: "#B45309", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Bus size={18} color="white" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: "#B45309", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Bus size={18} color="white" />
+          </div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Xe</h2>
         </div>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Báo giá Xe</h2>
+        {dbVehicles && dbVehicles.length > 0 && (
+          <button className="ta-btn" onClick={() => setShowPicker(true)}
+            style={{ background: "#B45309", color: "white", padding: "7px 14px", fontSize: 12.5 }}>
+            <Folder size={14} /> Chọn từ CSDL
+          </button>
+        )}
       </div>
+
+      {/* Picker modal */}
+      {showPicker && (
+        <DbPickerModal title="Chọn xe từ CSDL" color="#B45309" Icon={Bus} onClose={() => setShowPicker(false)}>
+          {(dbVehicles || []).length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>Chưa có xe nào trong CSDL</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {(dbVehicles || []).map(v => (
+                <div key={v.id} className="ta-card" style={{ padding: 14, cursor: "pointer", transition: "box-shadow .15s" }}
+                  onClick={() => importVehicleFromDb(v)}
+                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 0 0 2px #B45309"}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <div style={{ width: 72, height: 52, borderRadius: 8, overflow: "hidden", background: PALETTE.surfaceAlt, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {v.imageUrl
+                        ? <img src={v.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                        : <Bus size={22} color={PALETTE.textFaint} />}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{v.vehicleType}</div>
+                      {v.brand && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 1 }}>{v.brand}</div>}
+                      <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>
+                        {v.capacity > 0 ? `${v.capacity} chỗ · ` : ""}
+                        <span style={{ fontWeight: 600, color: "#B45309" }}>{formatVND(v.pricePerDay)}/ngày</span>
+                      </div>
+                      {v.note && <div style={{ fontSize: 11, color: PALETTE.textFaint, marginTop: 2 }}>{v.note}</div>}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "#B45309", fontWeight: 700 }}>→ Thêm vào</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DbPickerModal>
+      )}
+
 
       <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -3384,6 +3628,389 @@ function PublicTourView({ tour }) {
 
         <div style={{ marginTop: 16, fontSize: 11, color: PALETTE.textFaint, textAlign: "center" }}>
           Báo giá có giá trị tham khảo. Vui lòng liên hệ để xác nhận và đặt tour.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DB MANAGERS — Cơ sở dữ liệu
+   ============================================================ */
+
+/* ---- Shared DB shell ---- */
+function DbManagerShell({ title, Icon, color, items, onSave, newItem, renderCard, renderEditor, searchKeys }) {
+  const [editingId, setEditingId] = useState(null);
+  const [search, setSearch] = useState("");
+  const editing = items.find(i => i.id === editingId) || null;
+
+  const filtered = search
+    ? items.filter(i => searchKeys.some(k => (i[k] || "").toLowerCase().includes(search.toLowerCase())))
+    : items;
+
+  const create = () => {
+    const item = newItem();
+    onSave([item, ...items]);
+    setEditingId(item.id);
+  };
+
+  const update = (patch) => {
+    const updated = { ...editing, ...patch, updatedAt: Date.now() };
+    onSave(items.map(i => i.id === updated.id ? updated : i));
+    setEditingId(updated.id);
+  };
+
+  const remove = (id) => {
+    onSave(items.filter(i => i.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  return (
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      {/* Left: list */}
+      <div style={{ width: 300, borderRight: `1px solid ${PALETTE.border}`, display: "flex", flexDirection: "column", background: PALETTE.surface }}>
+        <div style={{ padding: "18px 16px 12px", borderBottom: `1px solid ${PALETTE.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 8, background: color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon size={16} color="white" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800 }}>{title}</div>
+                <div style={{ fontSize: 11, color: PALETTE.textMuted }}>{items.length} mục</div>
+              </div>
+            </div>
+            <button className="ta-btn ta-btn-primary" style={{ padding: "6px 10px", fontSize: 11.5 }} onClick={create}>
+              <Plus size={12} /> Thêm
+            </button>
+          </div>
+          <div style={{ position: "relative" }}>
+            <Search size={13} color={PALETTE.textFaint} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
+            <input className="ta-input" placeholder="Tìm kiếm..." value={search} onChange={e => setSearch(e.target.value)}
+              style={{ paddingLeft: 28, padding: "7px 10px 7px 28px", fontSize: 12 }} />
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint, fontSize: 12 }}>
+              <Icon size={24} color={PALETTE.textFaint} style={{ margin: "0 auto 8px", display: "block" }} />
+              Chưa có dữ liệu
+            </div>
+          ) : filtered.map(item => {
+            const active = editingId === item.id;
+            return (
+              <div key={item.id} onClick={() => setEditingId(item.id)}
+                style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${PALETTE.border}`, borderLeft: `3px solid ${active ? color : "transparent"}`, background: active ? `${color}10` : "transparent", transition: "all .12s" }}>
+                {renderCard(item, () => remove(item.id))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right: editor */}
+      <div style={{ flex: 1, overflow: "auto", background: PALETTE.bg }}>
+        {editing ? renderEditor(editing, update) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: PALETTE.textMuted }}>
+            <Icon size={32} color={PALETTE.textFaint} />
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Chọn mục để chỉnh sửa</div>
+            <div style={{ fontSize: 11.5, color: PALETTE.textFaint }}>hoặc bấm "Thêm" để tạo mới</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DB: ĐỊA ĐIỂM THAM QUAN
+   ============================================================ */
+function DbAttractionManager({ items, onSave }) {
+  return (
+    <DbManagerShell
+      title="Địa điểm / Vé tham quan" Icon={Ticket} color="#7C3AED"
+      items={items} onSave={onSave} newItem={newDbAttraction}
+      searchKeys={["name", "location"]}
+      renderCard={(item, onRemove) => (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name || "Chưa đặt tên"}</div>
+              {item.location && <div style={{ fontSize: 11, color: PALETTE.textMuted, marginTop: 2 }}>📍 {item.location}</div>}
+            </div>
+            <span style={{ fontSize: 11, color: "#7C3AED", fontWeight: 600, background: "#7C3AED18", padding: "2px 7px", borderRadius: 20 }}>
+              {(item.ticketTypes || []).length} loại vé
+            </span>
+          </div>
+          <button onClick={e => { e.stopPropagation(); onRemove(); }}
+            style={{ marginTop: 6, fontSize: 11, color: PALETTE.danger, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            Xoá
+          </button>
+        </div>
+      )}
+      renderEditor={(item, onChange) => <DbAttractionEditor item={item} onChange={onChange} />}
+    />
+  );
+}
+
+function DbAttractionEditor({ item, onChange }) {
+  const set = (k, v) => onChange({ [k]: v });
+  const setTicket = (id, patch) => onChange({ ticketTypes: (item.ticketTypes || []).map(t => t.id === id ? { ...t, ...patch } : t) });
+  const addTicket = () => onChange({ ticketTypes: [...(item.ticketTypes || []), newDbTicketType()] });
+  const removeTicket = (id) => onChange({ ticketTypes: (item.ticketTypes || []).filter(t => t.id !== id) });
+
+  return (
+    <div style={{ padding: 24, maxWidth: 720 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 20px", color: "#7C3AED" }}>🎡 Địa điểm tham quan</h2>
+
+      <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <Field label="Tên địa điểm" span={2}>
+            <input className="ta-input" placeholder="VD: VinWonders Phú Quốc" value={item.name || ""} onChange={e => set("name", e.target.value)} />
+          </Field>
+          <Field label="Địa điểm / Tỉnh thành">
+            <input className="ta-input" placeholder="VD: Phú Quốc" value={item.location || ""} onChange={e => set("location", e.target.value)} />
+          </Field>
+          <Field label="Giờ mở cửa">
+            <input className="ta-input" placeholder="VD: 8:00 - 22:00" value={item.openHours || ""} onChange={e => set("openHours", e.target.value)} />
+          </Field>
+          <Field label="Website" span={2}>
+            <input className="ta-input" placeholder="https://..." value={item.website || ""} onChange={e => set("website", e.target.value)} />
+          </Field>
+        </div>
+        <ImageInput label="🏞️ Ảnh đại diện địa điểm" value={item.coverImageUrl || ""} onChange={v => set("coverImageUrl", v)} height={160} placeholder="Dán link ảnh địa điểm tham quan" />
+        <div style={{ marginTop: 12 }}>
+          <Field label="Mô tả">
+            <textarea className="ta-textarea" rows={2} value={item.description || ""} onChange={e => set("description", e.target.value)} placeholder="Giới thiệu ngắn về địa điểm..." />
+          </Field>
+        </div>
+      </div>
+
+      {/* Loại vé */}
+      <div className="ta-card" style={{ overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "70px 1.2fr 120px 100px 100px 26px", gap: 6, padding: "9px 14px", background: "#7C3AED", fontSize: 11, fontWeight: 700, color: "white" }}>
+          <div>ẢNH VÉ</div><div>TÊN / LOẠI VÉ</div><div style={{ textAlign: "right" }}>ĐƠN GIÁ</div><div>LOẠI KHÁCH</div><div>GHI CHÚ</div><div />
+        </div>
+        {(item.ticketTypes || []).map((t) => (
+          <div key={t.id} style={{ display: "grid", gridTemplateColumns: "70px 1.2fr 120px 100px 100px 26px", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "start" }}>
+            <div>
+              <div style={{ width: 58, height: 42, borderRadius: 6, overflow: "hidden", background: PALETTE.surfaceAlt, border: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 4 }}>
+                {t.imageUrl ? <img src={t.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                  : <Ticket size={16} color={PALETTE.textFaint} />}
+              </div>
+              <input className="ta-input" placeholder="URL ảnh" value={t.imageUrl || ""} onChange={e => setTicket(t.id, { imageUrl: e.target.value })} style={{ padding: "3px 5px", fontSize: 9.5 }} />
+            </div>
+            <input className="ta-input" placeholder="Tên vé" value={t.name || ""} onChange={e => setTicket(t.id, { name: e.target.value })} style={{ padding: "5px 8px", fontSize: 13 }} />
+            <input className="ta-input" inputMode="numeric" placeholder="0" value={t.price ? Number(t.price).toLocaleString("en-US") : ""} onChange={e => setTicket(t.id, { price: parseNum(e.target.value) })} style={{ padding: "5px 8px", fontSize: 13, textAlign: "right" }} />
+            <select className="ta-select" value={t.type || "Người lớn"} onChange={e => setTicket(t.id, { type: e.target.value })} style={{ padding: "4px 6px", fontSize: 12 }}>
+              {["Người lớn", "Trẻ em", "Người cao tuổi", "Miễn phí"].map(tp => <option key={tp}>{tp}</option>)}
+            </select>
+            <input className="ta-input" placeholder="Ghi chú" value={t.note || ""} onChange={e => setTicket(t.id, { note: e.target.value })} style={{ padding: "5px 8px", fontSize: 12 }} />
+            <button onClick={() => removeTicket(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint, paddingTop: 4 }}><X size={14} /></button>
+          </div>
+        ))}
+        <div style={{ padding: "8px 14px" }}>
+          <button className="ta-btn ta-btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={addTicket}><Plus size={12} /> Thêm loại vé</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DB: KHÁCH SẠN
+   ============================================================ */
+function DbHotelManager({ items, onSave }) {
+  const STARS = [1, 2, 3, 4, 5];
+  return (
+    <DbManagerShell
+      title="Cơ sở dữ liệu Khách sạn" Icon={Building2} color="#0369A1"
+      items={items} onSave={onSave} newItem={newDbHotel}
+      searchKeys={["name", "location"]}
+      renderCard={(item, onRemove) => (
+        <div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <div style={{ width: 52, height: 38, borderRadius: 7, overflow: "hidden", background: PALETTE.surfaceAlt, flexShrink: 0 }}>
+              {item.coverImageUrl ? <img src={item.coverImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Building2 size={14} color={PALETTE.textFaint} /></div>}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name || "Chưa đặt tên"}</div>
+              {item.location && <div style={{ fontSize: 11, color: PALETTE.textMuted }}>📍 {item.location}</div>}
+              <div style={{ fontSize: 11, color: "#F59E0B", marginTop: 2 }}>{"★".repeat(item.stars || 4)}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#0369A1", fontWeight: 600, background: "#0369A118", padding: "2px 7px", borderRadius: 20 }}>
+              {(item.roomTypes || []).length} loại phòng
+            </span>
+            <button onClick={e => { e.stopPropagation(); onRemove(); }}
+              style={{ fontSize: 11, color: PALETTE.danger, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Xoá</button>
+          </div>
+        </div>
+      )}
+      renderEditor={(item, onChange) => <DbHotelEditor item={item} onChange={onChange} />}
+    />
+  );
+}
+
+function DbHotelEditor({ item, onChange }) {
+  const set = (k, v) => onChange({ [k]: v });
+  const setRoom = (id, patch) => onChange({ roomTypes: (item.roomTypes || []).map(r => r.id === id ? { ...r, ...patch } : r) });
+  const addRoom = () => onChange({ roomTypes: [...(item.roomTypes || []), newDbRoomType()] });
+  const removeRoom = (id) => onChange({ roomTypes: (item.roomTypes || []).filter(r => r.id !== id) });
+  const BOARD_OPTIONS = ["RO", "BB", "HB", "FB", "AI"];
+
+  return (
+    <div style={{ padding: 24, maxWidth: 820 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 20px", color: "#0369A1" }}>🏨 Khách sạn</h2>
+
+      <div className="ta-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <Field label="Tên khách sạn" span={2}>
+            <input className="ta-input" placeholder="VD: InterContinental Danang Sun Peninsula" value={item.name || ""} onChange={e => set("name", e.target.value)} />
+          </Field>
+          <Field label="Địa điểm / Tỉnh thành">
+            <input className="ta-input" placeholder="VD: Đà Nẵng" value={item.location || ""} onChange={e => set("location", e.target.value)} />
+          </Field>
+          <Field label="Số sao">
+            <div style={{ display: "flex", gap: 6 }}>
+              {[1,2,3,4,5].map(s => (
+                <button key={s} onClick={() => set("stars", s)}
+                  style={{ width: 36, height: 36, borderRadius: 8, border: `2px solid ${(item.stars || 4) >= s ? "#F59E0B" : PALETTE.border}`, background: (item.stars || 4) >= s ? "#FEF3C7" : PALETTE.surface, cursor: "pointer", fontSize: 16 }}>
+                  ★
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Website">
+            <input className="ta-input" placeholder="https://..." value={item.website || ""} onChange={e => set("website", e.target.value)} />
+          </Field>
+          <Field label="Điện thoại">
+            <input className="ta-input" placeholder="" value={item.phone || ""} onChange={e => set("phone", e.target.value)} />
+          </Field>
+        </div>
+        <ImageInput label="🏨 Ảnh đại diện khách sạn" value={item.coverImageUrl || ""} onChange={v => set("coverImageUrl", v)} height={150} placeholder="Dán link ảnh khách sạn" />
+        <div style={{ marginTop: 12 }}>
+          <Field label="Mô tả">
+            <textarea className="ta-textarea" rows={2} value={item.description || ""} onChange={e => set("description", e.target.value)} placeholder="Mô tả, tiện nghi nổi bật..." />
+          </Field>
+        </div>
+      </div>
+
+      {/* Loại phòng */}
+      <div className="ta-card" style={{ overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "80px 1.3fr 80px 110px 80px 26px", gap: 6, padding: "9px 14px", background: "#0369A1", fontSize: 11, fontWeight: 700, color: "white" }}>
+          <div>ẢNH PHÒNG</div><div>LOẠI PHÒNG</div><div>BOARD</div><div style={{ textAlign: "right" }}>GIÁ/ĐÊM</div><div>GHI CHÚ</div><div />
+        </div>
+        {(item.roomTypes || []).map((r) => (
+          <div key={r.id} style={{ display: "grid", gridTemplateColumns: "80px 1.3fr 80px 110px 80px 26px", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${PALETTE.border}`, alignItems: "start" }}>
+            <div>
+              <div style={{ width: 70, height: 50, borderRadius: 7, overflow: "hidden", background: PALETTE.surfaceAlt, border: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 4 }}>
+                {r.imageUrl ? <img src={r.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                  : <Building2 size={16} color={PALETTE.textFaint} />}
+              </div>
+              <input className="ta-input" placeholder="URL ảnh" value={r.imageUrl || ""} onChange={e => setRoom(r.id, { imageUrl: e.target.value })} style={{ padding: "3px 5px", fontSize: 9.5 }} />
+            </div>
+            <input className="ta-input" placeholder="VD: Deluxe Sea View" value={r.roomType || ""} onChange={e => setRoom(r.id, { roomType: e.target.value })} style={{ padding: "5px 8px", fontSize: 13 }} />
+            <select className="ta-select" value={r.board || "BB"} onChange={e => setRoom(r.id, { board: e.target.value })} style={{ padding: "4px 6px", fontSize: 12 }}>
+              {BOARD_OPTIONS.map(b => <option key={b}>{b}</option>)}
+            </select>
+            <input className="ta-input" inputMode="numeric" placeholder="0" value={r.pricePerNight ? Number(r.pricePerNight).toLocaleString("en-US") : ""} onChange={e => setRoom(r.id, { pricePerNight: parseNum(e.target.value) })} style={{ padding: "5px 8px", fontSize: 13, textAlign: "right" }} />
+            <input className="ta-input" placeholder="Ghi chú" value={r.note || ""} onChange={e => setRoom(r.id, { note: e.target.value })} style={{ padding: "5px 8px", fontSize: 12 }} />
+            <button onClick={() => removeRoom(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: PALETTE.textFaint, paddingTop: 4 }}><X size={14} /></button>
+          </div>
+        ))}
+        <div style={{ padding: "8px 14px" }}>
+          <button className="ta-btn ta-btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={addRoom}><Plus size={12} /> Thêm loại phòng</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DB: LOẠI XE ĐƠN LẺ
+   ============================================================ */
+function DbVehicleManager({ items, onSave }) {
+  return (
+    <DbManagerShell
+      title="Cơ sở dữ liệu Xe" Icon={Bus} color="#B45309"
+      items={items} onSave={onSave} newItem={newDbVehicle}
+      searchKeys={["vehicleType", "brand"]}
+      renderCard={(item, onRemove) => (
+        <div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <div style={{ width: 52, height: 38, borderRadius: 7, overflow: "hidden", background: PALETTE.surfaceAlt, flexShrink: 0 }}>
+              {item.imageUrl ? <img src={item.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Bus size={14} color={PALETTE.textFaint} /></div>}
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{item.vehicleType || "Loại xe"}</div>
+              {item.brand && <div style={{ fontSize: 11, color: PALETTE.textMuted }}>{item.brand}</div>}
+              {item.pricePerDay > 0 && <div style={{ fontSize: 12, color: "#B45309", fontWeight: 600, marginTop: 2 }}>{formatVND(item.pricePerDay)}/ngày</div>}
+            </div>
+          </div>
+          <button onClick={e => { e.stopPropagation(); onRemove(); }}
+            style={{ marginTop: 6, fontSize: 11, color: PALETTE.danger, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Xoá</button>
+        </div>
+      )}
+      renderEditor={(item, onChange) => <DbVehicleEditor item={item} onChange={onChange} />}
+    />
+  );
+}
+
+function DbVehicleEditor({ item, onChange }) {
+  const set = (k, v) => onChange({ [k]: v });
+  return (
+    <div style={{ padding: 24, maxWidth: 600 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 20px", color: "#B45309" }}>🚌 Loại xe</h2>
+      <div className="ta-card" style={{ padding: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <Field label="Loại xe">
+            <select className="ta-select" value={item.vehicleType || "Xe 16 chỗ"} onChange={e => set("vehicleType", e.target.value)}>
+              {["Xe 4 chỗ","Xe 7 chỗ","Xe 16 chỗ","Xe 29 chỗ","Xe 35 chỗ","Xe 45 chỗ","Xe buýt"].map(t => <option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Hãng xe / Nhà cung cấp">
+            <input className="ta-input" placeholder="VD: Toyota Hiace, Thaco..." value={item.brand || ""} onChange={e => set("brand", e.target.value)} />
+          </Field>
+          <Field label="Sức chứa (chỗ ngồi)">
+            <input className="ta-input" type="number" min={1} value={item.capacity || 16} onChange={e => set("capacity", parseInt(e.target.value) || 16)} />
+          </Field>
+          <Field label="Đơn giá / ngày ($)">
+            <input className="ta-input" inputMode="numeric" placeholder="0" value={item.pricePerDay ? Number(item.pricePerDay).toLocaleString("en-US") : ""} onChange={e => set("pricePerDay", parseNum(e.target.value))} />
+          </Field>
+          <Field label="Ghi chú / Điều kiện" span={2}>
+            <textarea className="ta-textarea" rows={2} value={item.note || ""} onChange={e => set("note", e.target.value)} placeholder="Phạm vi hoạt động, điều kiện thuê..." />
+          </Field>
+        </div>
+        <ImageInput label="🚌 Ảnh loại xe" value={item.imageUrl || ""} onChange={v => set("imageUrl", v)} height={160} placeholder="Dán link ảnh xe" />
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   DB PICKER MODAL — Chọn từ CSDL khi tạo báo giá
+   ============================================================ */
+function DbPickerModal({ title, color, Icon, onClose, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={onClose}>
+      <div style={{ background: PALETTE.surface, borderRadius: 16, width: "100%", maxWidth: 720, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${PALETTE.border}`, background: color }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "white" }}>
+            <Icon size={18} color="white" />
+            <span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span>
+          </div>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+          {children}
         </div>
       </div>
     </div>
