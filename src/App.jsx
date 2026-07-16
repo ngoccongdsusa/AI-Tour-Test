@@ -1485,6 +1485,62 @@ function HotelEditor({ item, onChange, onClose, dbHotels }) {
       <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${PALETTE.border}` }}>
         <ShareQuoteButton data={item} routePrefix="hotel" color="#0369A1" />
       </div>
+
+      {/* Modal chọn KS từ CSDL */}
+      {showPicker && (
+        <DbPickerModal title="Chọn khách sạn từ CSDL" color="#0369A1" Icon={Building2} onClose={() => setShowPicker(false)}>
+          {(dbHotels || []).length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>
+              Chưa có khách sạn nào trong CSDL. Vào <b>Cơ sở dữ liệu → Khách sạn</b> để thêm.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {(dbHotels || []).map(hotel => (
+                <div key={hotel.id} className="ta-card"
+                  style={{ padding: 14, cursor: "pointer", transition: "box-shadow .15s" }}
+                  onClick={() => importFromDb(hotel)}
+                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 0 0 2px #0369A1"}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    {hotel.coverImageUrl && (
+                      <img src={hotel.coverImageUrl} alt=""
+                        style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
+                        onError={e => { e.target.style.display = "none"; }} />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{hotel.name}</span>
+                        {hotel.stars > 0 && (
+                          <span style={{ fontSize: 12, color: "#F59E0B" }}>{"⭐".repeat(Math.min(hotel.stars, 5))}</span>
+                        )}
+                      </div>
+                      {hotel.location && (
+                        <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>📍 {hotel.location}</div>
+                      )}
+                      {hotel.website && (
+                        <div style={{ fontSize: 12, color: PALETTE.textMuted }}>🌐 {hotel.website}</div>
+                      )}
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {(hotel.roomTypes || []).map(r => (
+                          <span key={r.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#0369A118", color: "#0369A1", fontWeight: 600 }}>
+                            {r.name} — {formatVND(r.price)}{r.board ? ` (${r.board})` : ""}
+                          </span>
+                        ))}
+                        {(hotel.roomTypes || []).length === 0 && (
+                          <span style={{ fontSize: 11, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có loại phòng</span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "#0369A1", fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>
+                      → Chọn
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DbPickerModal>
+      )}
     </div>
   );
 }
