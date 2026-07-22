@@ -1159,10 +1159,24 @@ function TicketEditor({ item, onChange, onClose, dbAttractions }) {
   const addItem = () => onChange({ items: [...(item.items||[]), newTicketItem()] });
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i => i.id!==id) });
   const [showPicker, setShowPicker] = useState(false);
+  const [selectedAttr, setSelectedAttr] = useState(null);   // Lớp 1: địa điểm đã chọn
+  const [selectedTickets, setSelectedTickets] = useState({}); // Lớp 2: id vé → true/false
 
-  // Import từ CSDL địa điểm
-  const importFromDb = (attraction) => {
-    const importedItems = (attraction.ticketTypes || []).map(t => ({
+  const closePicker = () => { setShowPicker(false); setSelectedAttr(null); setSelectedTickets({}); };
+
+  const handleSelectAttr = (attr) => {
+    setSelectedAttr(attr);
+    // Mặc định chọn tất cả loại vé
+    const all = {};
+    (attr.ticketTypes || []).forEach(t => { all[t.id] = true; });
+    setSelectedTickets(all);
+  };
+
+  const handleConfirmTickets = () => {
+    if (!selectedAttr) return;
+    const chosen = (selectedAttr.ticketTypes || []).filter(t => selectedTickets[t.id]);
+    if (chosen.length === 0) return;
+    const importedItems = chosen.map(t => ({
       ...newTicketItem(),
       name: t.name || "",
       type: t.type || "Người lớn",
@@ -1171,11 +1185,11 @@ function TicketEditor({ item, onChange, onClose, dbAttractions }) {
       qty: item.pax || 1,
     }));
     onChange({
-      destination: attraction.name || item.destination,
-      coverImageUrl: attraction.coverImageUrl || item.coverImageUrl,
-      items: importedItems.length > 0 ? importedItems : item.items,
+      destination: selectedAttr.name || item.destination,
+      coverImageUrl: selectedAttr.coverImageUrl || item.coverImageUrl,
+      items: [...(item.items || []).filter(i => i.name), ...importedItems],
     });
-    setShowPicker(false);
+    closePicker();
   };
 
   return (
@@ -1268,41 +1282,93 @@ function TicketEditor({ item, onChange, onClose, dbAttractions }) {
         </div>
       </div>
 
-      {/* Picker modal */}
+      {/* Picker modal 2 lớp */}
       {showPicker && (
-        <DbPickerModal title="Chọn địa điểm tham quan từ CSDL" color="#7C3AED" Icon={Ticket} onClose={() => setShowPicker(false)}>
-          {(dbAttractions || []).length === 0 ? (
-            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>Chưa có địa điểm nào trong CSDL</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {(dbAttractions || []).map(attr => (
-                <div key={attr.id} className="ta-card" style={{ padding: 14, cursor: "pointer", transition: "box-shadow .15s" }}
-                  onClick={() => importFromDb(attr)}
-                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 0 0 2px #7C3AED"}
-                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                    {attr.coverImageUrl && (
-                      <img src={attr.coverImageUrl} alt="" style={{ width: 72, height: 52, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
-                        onError={e => { e.target.style.display = "none"; }} />
-                    )}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{attr.name}</div>
-                      {attr.location && <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>📍 {attr.location}</div>}
-                      {attr.openHours && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>🕐 {attr.openHours}</div>}
-                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {(attr.ticketTypes || []).map(t => (
-                          <span key={t.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#7C3AED18", color: "#7C3AED", fontWeight: 600 }}>
-                            {t.name} — {formatVND(t.price)}
-                          </span>
-                        ))}
+        <DbPickerModal
+          title={selectedAttr ? `Lớp 2 — Chọn loại vé: ${selectedAttr.name}` : "Lớp 1 — Chọn địa điểm tham quan"}
+          color="#7C3AED" Icon={Ticket} onClose={closePicker}
+          onBack={selectedAttr ? () => { setSelectedAttr(null); setSelectedTickets({}); } : null}
+        >
+          {!selectedAttr ? (
+            /* LỚP 1: Danh sách địa điểm */
+            (dbAttractions || []).length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>Chưa có địa điểm nào trong CSDL</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {(dbAttractions || []).map(attr => (
+                  <div key={attr.id} className="ta-card"
+                    style={{ padding: 14, cursor: "pointer", border: "1.5px solid transparent", transition: "all .15s" }}
+                    onClick={() => handleSelectAttr(attr)}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#7C3AED"; e.currentTarget.style.background = "#7C3AED08"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.background = "white"; }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      {attr.coverImageUrl && (
+                        <img src={attr.coverImageUrl} alt="" style={{ width: 64, height: 48, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
+                          onError={e => { e.target.style.display = "none"; }} />
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{attr.name}</div>
+                        {attr.location && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>📍 {attr.location}</div>}
+                        <div style={{ fontSize: 11.5, color: PALETTE.textFaint, marginTop: 3 }}>
+                          {(attr.ticketTypes || []).length} loại vé
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: "#7C3AED", fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>
-                      → Chọn
+                      <ChevronRight size={18} color="#7C3AED" />
                     </div>
                   </div>
+                ))}
+              </div>
+            )
+          ) : (
+            /* LỚP 2: Chọn loại vé của địa điểm đã chọn */
+            <div>
+              {/* Header địa điểm */}
+              <div style={{ display: "flex", gap: 12, padding: "12px 16px", background: "#7C3AED12", borderRadius: 10, marginBottom: 14, alignItems: "center" }}>
+                {selectedAttr.coverImageUrl && (
+                  <img src={selectedAttr.coverImageUrl} alt="" style={{ width: 56, height: 42, objectFit: "cover", borderRadius: 6 }}
+                    onError={e => { e.target.style.display = "none"; }} />
+                )}
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#7C3AED" }}>{selectedAttr.name}</div>
+                  {selectedAttr.location && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>📍 {selectedAttr.location}</div>}
                 </div>
-              ))}
+              </div>
+
+              {/* Chọn loại vé */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {(selectedAttr.ticketTypes || []).length === 0 ? (
+                  <div style={{ textAlign: "center", color: PALETTE.textFaint, padding: 16, fontSize: 13 }}>Địa điểm này chưa có loại vé nào</div>
+                ) : (
+                  (selectedAttr.ticketTypes || []).map(t => (
+                    <label key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10,
+                      border: `1.5px solid ${selectedTickets[t.id] ? "#7C3AED" : PALETTE.border}`,
+                      background: selectedTickets[t.id] ? "#7C3AED08" : "white", cursor: "pointer", transition: "all .15s" }}>
+                      <input type="checkbox" checked={!!selectedTickets[t.id]}
+                        onChange={e => setSelectedTickets(prev => ({ ...prev, [t.id]: e.target.checked }))}
+                        style={{ width: 16, height: 16, accentColor: "#7C3AED", cursor: "pointer", flexShrink: 0 }} />
+                      {t.imageUrl && (
+                        <img src={t.imageUrl} alt="" style={{ width: 48, height: 36, objectFit: "cover", borderRadius: 6, flexShrink: 0 }}
+                          onError={e => { e.target.style.display = "none"; }} />
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{t.name}</div>
+                        <div style={{ fontSize: 11.5, color: PALETTE.textMuted }}>{t.type || "Người lớn"}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: "#7C3AED", whiteSpace: "nowrap" }}>{formatVND(t.price)}</div>
+                    </label>
+                  ))
+                )}
+              </div>
+
+              {/* Nút xác nhận */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button className="ta-btn ta-btn-ghost" onClick={() => { setSelectedAttr(null); setSelectedTickets({}); }}>← Quay lại</button>
+                <button className="ta-btn" onClick={handleConfirmTickets}
+                  style={{ background: "#7C3AED", color: "white" }}
+                  disabled={Object.values(selectedTickets).filter(Boolean).length === 0}>
+                  <Check size={15} /> Thêm {Object.values(selectedTickets).filter(Boolean).length} loại vé vào báo giá
+                </button>
+              </div>
             </div>
           )}
         </DbPickerModal>
@@ -1347,9 +1413,23 @@ function HotelEditor({ item, onChange, onClose, dbHotels }) {
   const addItem = () => onChange({ items: [...(item.items||[]), newRoomItem()] });
   const removeItem = (id) => onChange({ items: (item.items||[]).filter(i=>i.id!==id) });
   const [showPicker, setShowPicker] = useState(false);
+  const [selectedHotel, setSelectedHotel] = useState(null);
+  const [selectedRooms, setSelectedRooms] = useState({});
 
-  const importFromDb = (hotel) => {
-    const importedItems = (hotel.roomTypes || []).map(r => ({
+  const closePicker = () => { setShowPicker(false); setSelectedHotel(null); setSelectedRooms({}); };
+
+  const handleSelectHotel = (hotel) => {
+    setSelectedHotel(hotel);
+    const all = {};
+    (hotel.roomTypes || []).forEach(r => { all[r.id] = true; });
+    setSelectedRooms(all);
+  };
+
+  const handleConfirmRooms = () => {
+    if (!selectedHotel) return;
+    const chosen = (selectedHotel.roomTypes || []).filter(r => selectedRooms[r.id]);
+    if (chosen.length === 0) return;
+    const importedItems = chosen.map(r => ({
       ...newRoomItem(),
       roomType: r.name || r.roomType || "",
       unitPrice: r.price || 0,
@@ -1359,12 +1439,12 @@ function HotelEditor({ item, onChange, onClose, dbHotels }) {
       nights: item.nights || 1,
     }));
     onChange({
-      hotelName: hotel.name || item.hotelName,
-      location: hotel.location || item.location,
-      coverImageUrl: hotel.coverImageUrl || item.coverImageUrl,
-      items: importedItems.length > 0 ? importedItems : item.items,
+      hotelName: selectedHotel.name || item.hotelName,
+      location: selectedHotel.location || item.location,
+      coverImageUrl: selectedHotel.coverImageUrl || item.coverImageUrl,
+      items: [...(item.items || []).filter(i => i.roomType), ...importedItems],
     });
-    setShowPicker(false);
+    closePicker();
   };
 
   return (
@@ -1486,57 +1566,109 @@ function HotelEditor({ item, onChange, onClose, dbHotels }) {
         <ShareQuoteButton data={item} routePrefix="hotel" color="#0369A1" />
       </div>
 
-      {/* Modal chọn KS từ CSDL */}
+      {/* Modal chọn KS từ CSDL — 2 lớp */}
       {showPicker && (
-        <DbPickerModal title="Chọn khách sạn từ CSDL" color="#0369A1" Icon={Building2} onClose={() => setShowPicker(false)}>
-          {(dbHotels || []).length === 0 ? (
-            <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>
-              Chưa có khách sạn nào trong CSDL. Vào <b>Cơ sở dữ liệu → Khách sạn</b> để thêm.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {(dbHotels || []).map(hotel => (
-                <div key={hotel.id} className="ta-card"
-                  style={{ padding: 14, cursor: "pointer", transition: "box-shadow .15s" }}
-                  onClick={() => importFromDb(hotel)}
-                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 0 0 2px #0369A1"}
-                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                    {hotel.coverImageUrl && (
-                      <img src={hotel.coverImageUrl} alt=""
-                        style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
-                        onError={e => { e.target.style.display = "none"; }} />
-                    )}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontWeight: 700, fontSize: 14 }}>{hotel.name}</span>
-                        {hotel.stars > 0 && (
-                          <span style={{ fontSize: 12, color: "#F59E0B" }}>{"⭐".repeat(Math.min(hotel.stars, 5))}</span>
-                        )}
-                      </div>
-                      {hotel.location && (
-                        <div style={{ fontSize: 12, color: PALETTE.textMuted, marginTop: 2 }}>📍 {hotel.location}</div>
+        <DbPickerModal
+          title={selectedHotel ? `Lớp 2 — Chọn loại phòng: ${selectedHotel.name}` : "Lớp 1 — Chọn khách sạn"}
+          color="#0369A1" Icon={Building2} onClose={closePicker}
+          onBack={selectedHotel ? () => { setSelectedHotel(null); setSelectedRooms({}); } : null}
+        >
+          {!selectedHotel ? (
+            /* LỚP 1: Danh sách khách sạn */
+            (dbHotels || []).length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: PALETTE.textFaint }}>
+                Chưa có khách sạn nào trong CSDL. Vào <b>Cơ sở dữ liệu → Khách sạn</b> để thêm.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {(dbHotels || []).map(hotel => (
+                  <div key={hotel.id} className="ta-card"
+                    style={{ padding: 14, cursor: "pointer", border: "1.5px solid transparent", transition: "all .15s" }}
+                    onClick={() => handleSelectHotel(hotel)}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#0369A1"; e.currentTarget.style.background = "#0369A108"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.background = "white"; }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      {hotel.coverImageUrl ? (
+                        <img src={hotel.coverImageUrl} alt="" style={{ width: 72, height: 54, objectFit: "cover", borderRadius: 8, flexShrink: 0 }}
+                          onError={e => { e.target.style.display = "none"; }} />
+                      ) : (
+                        <div style={{ width: 72, height: 54, borderRadius: 8, background: PALETTE.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <Building2 size={24} color={PALETTE.textFaint} />
+                        </div>
                       )}
-                      {hotel.website && (
-                        <div style={{ fontSize: 12, color: PALETTE.textMuted }}>🌐 {hotel.website}</div>
-                      )}
-                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {(hotel.roomTypes || []).map(r => (
-                          <span key={r.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#0369A118", color: "#0369A1", fontWeight: 600 }}>
-                            {r.name} — {formatVND(r.price)}{r.board ? ` (${r.board})` : ""}
-                          </span>
-                        ))}
-                        {(hotel.roomTypes || []).length === 0 && (
-                          <span style={{ fontSize: 11, color: PALETTE.textFaint, fontStyle: "italic" }}>Chưa có loại phòng</span>
-                        )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontWeight: 700, fontSize: 14 }}>{hotel.name}</span>
+                          {hotel.stars > 0 && <span style={{ fontSize: 12, color: "#F59E0B" }}>{"⭐".repeat(Math.min(hotel.stars, 5))}</span>}
+                        </div>
+                        {hotel.location && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>📍 {hotel.location}</div>}
+                        <div style={{ fontSize: 11.5, color: PALETTE.textFaint, marginTop: 3 }}>
+                          {(hotel.roomTypes || []).length} loại phòng
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: "#0369A1", fontWeight: 700, whiteSpace: "nowrap", paddingTop: 2 }}>
-                      → Chọn
+                      <ChevronRight size={18} color="#0369A1" />
                     </div>
                   </div>
+                ))}
+              </div>
+            )
+          ) : (
+            /* LỚP 2: Chọn loại phòng */
+            <div>
+              {/* Header KS đã chọn */}
+              <div style={{ display: "flex", gap: 12, padding: "12px 16px", background: "#0369A112", borderRadius: 10, marginBottom: 14, alignItems: "center" }}>
+                {selectedHotel.coverImageUrl && (
+                  <img src={selectedHotel.coverImageUrl} alt="" style={{ width: 56, height: 42, objectFit: "cover", borderRadius: 6 }}
+                    onError={e => { e.target.style.display = "none"; }} />
+                )}
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0369A1" }}>
+                    {selectedHotel.name}
+                    {selectedHotel.stars > 0 && <span style={{ fontSize: 12, color: "#F59E0B", marginLeft: 6 }}>{"⭐".repeat(Math.min(selectedHotel.stars, 5))}</span>}
+                  </div>
+                  {selectedHotel.location && <div style={{ fontSize: 12, color: PALETTE.textMuted }}>📍 {selectedHotel.location}</div>}
                 </div>
-              ))}
+              </div>
+
+              {/* Chọn loại phòng */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {(selectedHotel.roomTypes || []).length === 0 ? (
+                  <div style={{ textAlign: "center", color: PALETTE.textFaint, padding: 16, fontSize: 13 }}>
+                    Khách sạn này chưa có loại phòng nào
+                  </div>
+                ) : (
+                  (selectedHotel.roomTypes || []).map(r => (
+                    <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10,
+                      border: `1.5px solid ${selectedRooms[r.id] ? "#0369A1" : PALETTE.border}`,
+                      background: selectedRooms[r.id] ? "#0369A108" : "white", cursor: "pointer", transition: "all .15s" }}>
+                      <input type="checkbox" checked={!!selectedRooms[r.id]}
+                        onChange={e => setSelectedRooms(prev => ({ ...prev, [r.id]: e.target.checked }))}
+                        style={{ width: 16, height: 16, accentColor: "#0369A1", cursor: "pointer", flexShrink: 0 }} />
+                      {r.imageUrl && (
+                        <img src={r.imageUrl} alt="" style={{ width: 56, height: 42, objectFit: "cover", borderRadius: 6, flexShrink: 0 }}
+                          onError={e => { e.target.style.display = "none"; }} />
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
+                        <div style={{ fontSize: 11.5, color: PALETTE.textMuted }}>{r.board || "BB"}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: "#0369A1", whiteSpace: "nowrap" }}>
+                        {formatVND(r.price)}<span style={{ fontSize: 11, fontWeight: 400 }}>/đêm</span>
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+
+              {/* Nút xác nhận */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button className="ta-btn ta-btn-ghost" onClick={() => { setSelectedHotel(null); setSelectedRooms({}); }}>← Quay lại</button>
+                <button className="ta-btn" onClick={handleConfirmRooms}
+                  style={{ background: "#0369A1", color: "white" }}
+                  disabled={Object.values(selectedRooms).filter(Boolean).length === 0}>
+                  <Check size={15} /> Thêm {Object.values(selectedRooms).filter(Boolean).length} loại phòng vào báo giá
+                </button>
+              </div>
             </div>
           )}
         </DbPickerModal>
@@ -4050,21 +4182,44 @@ function DbVehicleEditor({ item, onChange }) {
 /* ============================================================
    DB PICKER MODAL — Chọn từ CSDL khi tạo báo giá
    ============================================================ */
-function DbPickerModal({ title, color, Icon, onClose, children }) {
+function DbPickerModal({ title, color, Icon, onClose, onBack, children }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
       onClick={onClose}>
-      <div style={{ background: PALETTE.surface, borderRadius: 16, width: "100%", maxWidth: 720, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+      <div style={{ background: PALETTE.surface, borderRadius: 16, width: "100%", maxWidth: 720, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${PALETTE.border}`, background: color }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: `1px solid ${PALETTE.border}`, background: color }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "white" }}>
+            {onBack && (
+              <button onClick={onBack}
+                style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 8, padding: "4px 10px", cursor: "pointer", color: "white", fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, marginRight: 4 }}>
+                <ArrowLeft size={13} /> Quay lại
+              </button>
+            )}
             <Icon size={18} color="white" />
             <span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span>
           </div>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={onClose}
+            style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", color: "white", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <X size={14} />
           </button>
         </div>
+        {/* Breadcrumb lớp */}
+        {onBack && (
+          <div style={{ padding: "8px 20px", background: `${color}15`, borderBottom: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            <span style={{ color: PALETTE.textMuted, cursor: "pointer", textDecoration: "underline" }} onClick={onBack}>Lớp 1</span>
+            <ChevronRight size={13} color={PALETTE.textFaint} />
+            <span style={{ fontWeight: 700, color: color }}>Lớp 2</span>
+          </div>
+        )}
+        {!onBack && (
+          <div style={{ padding: "8px 20px", background: `${color}15`, borderBottom: `1px solid ${PALETTE.border}`, display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            <span style={{ fontWeight: 700, color: color }}>Lớp 1 — Chọn nhóm</span>
+            <ChevronRight size={13} color={PALETTE.textFaint} />
+            <span style={{ color: PALETTE.textFaint }}>Lớp 2 — Chọn loại</span>
+          </div>
+        )}
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           {children}
         </div>
